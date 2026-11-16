@@ -9,9 +9,12 @@ Only the latest release of this fork receives fixes.
 Please **do not open a public issue** for a security problem, and **never attach real case data** (chats, images, names,
 phone numbers, OCR text, extractions): use synthetic data that reproduces the problem.
 
-Use GitHub's **private vulnerability reporting** ("Security" tab → "Report a vulnerability") on this repository.
-*(Maintainer: enable it under Settings → Code security, and add a contact address here if you prefer e-mail.)*
-For problems in the upstream project, report to https://github.com/G33KF/LEXIS; for ALEAPP/iLEAPP, to their own repositories.
+Report it privately with **GitHub Private Vulnerability Reporting**: open the **Security** tab of
+[Medvjed80/LEXIS](https://github.com/Medvjed80/LEXIS/security) and click **"Report a vulnerability"**. Only the
+maintainers see the report. There is no e-mail contact.
+
+For problems in the original project, report to https://github.com/G33KF/LEXIS; for ALEAPP/iLEAPP, to their own repositories.
+Other (non-security) issues: https://github.com/Medvjed80/LEXIS/issues.
 
 We aim to acknowledge within 7 days. Please give us reasonable time to fix before public disclosure.
 

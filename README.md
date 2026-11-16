@@ -1,7 +1,7 @@
 # LEXIS — LEAPP Reader
 
 > **This is a community fork of [G33KF/LEXIS](https://github.com/G33KF/LEXIS)** (upstream version 1.2.5, MIT).
-> It adds the 1.2.6–1.2.8 features, buildable ALEAPP/iLEAPP engines and a privacy hardening for GDPR use.
+> It adds the 1.2.6–1.2.8 features, buildable ALEAPP/iLEAPP engines and a privacy hardening, designed following GDPR privacy-by-design principles.
 > The full list of differences is in [CHANGES-FROM-UPSTREAM.md](CHANGES-FROM-UPSTREAM.md); the data-protection
 > notes are in [PRIVACY.md](PRIVACY.md) ([italiano](PRIVACY.it.md)); security reporting is in [SECURITY.md](SECURITY.md).
 > The upstream licence and copyright are kept unchanged (see [LICENSE](LICENSE) and [NOTICE](NOTICE)).
@@ -266,10 +266,9 @@ release/                      build output (ignored by git)
 
 ## Contact
 
-Upstream project contacts (not the maintainer of this fork):
-
-- E-mail: [info@gk-forensics.com](mailto:info@gk-forensics.com)
-- LinkedIn: [gkforensics](https://it.linkedin.com/in/gkforensics)
+- This fork: questions and bug reports in [GitHub Issues](https://github.com/Medvjed80/LEXIS/issues)
+  (never attach real case data); security problems through private vulnerability reporting, see [SECURITY.md](SECURITY.md).
+- Original project: [G33KF/LEXIS](https://github.com/G33KF/LEXIS).
 
 ## Credits
 

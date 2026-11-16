@@ -63,7 +63,7 @@ La cronologia git conserva i commit originali; il lavoro del fork è nei commit 
 - **TLS**: AI servers outside the PC and the LAN must use `https://`.
 - **Explorer** is started with an argument list instead of a quoted command string.
 - **Secrets**: none were present in the source; API keys are entered in the UI and stored encrypted with Windows DPAPI, never in the repository. A personal build path in the README example was replaced by a placeholder. `.gitleaks.toml`, `.pre-commit-config.yaml` and `settings.example.json` added; `.gitignore` extended.
-- **Documentation**: `PRIVACY.md` / `PRIVACY.it.md` (GDPR), `SECURITY.md`, `NOTICE` (fork attribution, Leaflet), this file.
+- **Documentation**: `PRIVACY.md` / `PRIVACY.it.md` (designed following GDPR privacy-by-design principles), `SECURITY.md`, `NOTICE` (fork attribution, Leaflet), this file.
 - **Tests**: `PrivacyTests` (no messages in logs, temp sweep).
 
 ### Files changed
@@ -124,7 +124,7 @@ About 40 source files and 10 new files (`TaggedFileNav.cs`, `TranscriptNotes.cs`
 - **TLS**: i server AI fuori dal PC e dalla LAN devono usare `https://`.
 - **Explorer** viene avviato con un elenco di argomenti invece di una stringa tra virgolette.
 - **Segreti**: nel sorgente non ce n'erano; le chiavi API si inseriscono nell'interfaccia e sono cifrate con DPAPI di Windows, mai nel repository. Un percorso personale di build nell'esempio del README è stato sostituito da un segnaposto. Aggiunti `.gitleaks.toml`, `.pre-commit-config.yaml`, `settings.example.json`; esteso `.gitignore`.
-- **Documentazione**: `PRIVACY.md` / `PRIVACY.it.md` (GDPR), `SECURITY.md`, `NOTICE` (attribuzione del fork, Leaflet), questo file.
+- **Documentazione**: `PRIVACY.md` / `PRIVACY.it.md` (progettato secondo i principi di privacy by design del GDPR), `SECURITY.md`, `NOTICE` (attribuzione del fork, Leaflet), questo file.
 - **Test**: `PrivacyTests` (nessun messaggio nei log, pulizia dei temporanei).
 
 ### File modificati

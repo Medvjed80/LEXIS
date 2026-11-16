@@ -1,7 +1,8 @@
 # Privacy e protezione dei dati (GDPR) — LEXIS
 
 > English version: [PRIVACY.md](PRIVACY.md). Questo documento descrive il comportamento del software e come usarlo in modo
-> coerente con il GDPR (Regolamento (UE) 2016/679). È una guida tecnica, **non una consulenza legale**: base giuridica,
+> secondo i principi di privacy by design del GDPR (Regolamento (UE) 2016/679). È una guida tecnica, **non una consulenza legale**
+> né una certificazione di conformità: base giuridica,
 > tempi di conservazione e DPIA spettano all'organizzazione che usa LEXIS.
 
 ## 1. Ruoli
@@ -79,4 +80,4 @@ nessun caso su cartelle condivise o sincronizzate in cloud; supporti cifrati per
 ## 7. Uso del repository
 
 **Non inserire mai dati reali di casi in issue, pull request, screenshot o file di test.** Usare solo dati sintetici.
-Segnalazione di vulnerabilità: [SECURITY.md](SECURITY.md).
+Segnalazione di vulnerabilità: [SECURITY.md](SECURITY.md); altre segnalazioni su https://github.com/Medvjed80/LEXIS/issues.

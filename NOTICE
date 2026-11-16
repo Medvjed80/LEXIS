@@ -1,9 +1,10 @@
 LEXIS - LEAPP Reader
 Copyright (c) 2026 gk-forensics, MIT licence (see LICENSE).
+Copyright (c) 2026 Alessio Ferrara (fork modifications)
 
 This repository is a fork of https://github.com/G33KF/LEXIS (upstream 1.2.5, commit a0bc77e, MIT). The upstream
 copyright notice above is retained; changes made in this fork are listed in CHANGES-FROM-UPSTREAM.md (git history
-shows every line) and are offered under the same MIT terms. Fork contributors keep the copyright of their own changes.
+shows every line) and are offered under the same MIT terms. Fork repository: https://github.com/Medvjed80/LEXIS
 
 Leaflet 1.9.4 (BSD 2-Clause, Copyright (c) 2010-2023 Volodymyr Agafonkin, (c) 2010-2011 CloudMade) and
 Leaflet.markercluster 1.5.3 (MIT, Copyright 2012 David Leaver) are embedded in the exe for the map view, unmodified

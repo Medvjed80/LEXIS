@@ -1,7 +1,8 @@
 # Privacy and data protection (GDPR) — LEXIS
 
 > Italian version: [PRIVACY.it.md](PRIVACY.it.md). This document describes how the software behaves and how to use it
-> in a way that supports GDPR (Regulation (EU) 2016/679) compliance. It is technical guidance, **not legal advice**:
+> following the privacy-by-design principles of the GDPR (Regulation (EU) 2016/679). It is technical guidance, **not legal advice**
+> and not a certification of compliance:
 > the lawful basis, the retention periods and the DPIA belong to the organisation that uses LEXIS.
 
 ## 1. Roles
@@ -83,7 +84,7 @@ access control and logging of who opens cases; verified secure deletion at the e
 ## 7. Using this repository and issues
 
 **Never put real case data in issues, pull requests, screenshots or test files.** Use synthetic data only. The test suite
-uses synthetic data exclusively. Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
+uses synthetic data exclusively. Report vulnerabilities as described in [SECURITY.md](SECURITY.md); other issues at https://github.com/Medvjed80/LEXIS/issues.
 
 ## 8. Third-party components
 
