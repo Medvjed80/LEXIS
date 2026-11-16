@@ -11,5 +11,10 @@ paths = [
   '''ILEAPP/admin/image_manifest\.json''',
   '''ALEAPP/admin/test/data/raw_images/ad-cert-test-key-2048\.pem''',
   '''ALEAPP/scripts/artifacts/appLockerfishingnet\.py''',
-  '''ILEAPP/scripts/artifacts/Ph0\d\d[A-Za-z0-9]*\.py''',
+  '''ILEAPP/scripts/artifacts/Ph\d\d\d[A-Za-z0-9]*\.py''',
 ]
+
+[[allowlists]]
+description = "UI label text 'Backup password:' (not a credential)"
+paths = ['''src/AleappReader\.App/Views/ViewTemplates\.xaml''']
+regexes = ['''Backup password:''']
