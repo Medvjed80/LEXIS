@@ -4,9 +4,9 @@ namespace AleappReader.Core;
 
 public enum ChatTheme { WhatsApp, Telegram }
 
-/// <summary>How a chat page looks, and whether the examiner's tags and notes go into it (never by default: they are
-/// the examiner's work, not the evidence).</summary>
-public sealed record ChatExportOptions(ChatTheme Theme = ChatTheme.WhatsApp, bool TagsAndNotes = false)
+/// <summary>How a chat page looks, and whether the examiner's tags, notes and audio transcripts go into it
+/// (never by default: they are the examiner's work, not the evidence).</summary>
+public sealed record ChatExportOptions(ChatTheme Theme = ChatTheme.WhatsApp, bool TagsAndNotes = false, bool Transcripts = false)
 {
     public static ChatTheme ThemeFor(ArtifactInfo a) =>
         $"{a.Category} {a.Module}".Contains("telegram", StringComparison.OrdinalIgnoreCase) ? ChatTheme.Telegram : ChatTheme.WhatsApp;
@@ -43,6 +43,7 @@ public static class ChatHtmlExporter
         .recovered .bubble{outline:2px dashed #c2410c;outline-offset:1px}
         .recnote{font-size:11px;color:#c2410c;font-weight:600;margin-top:3px}
         .tagnote{font-size:11px;background:#fff4cc;border:1px solid #e8d48a;border-radius:4px;padding:2px 6px;margin-top:3px}
+        .transcript{font-size:12px;color:#3b4a54;white-space:pre-wrap;word-break:break-word;margin-top:4px}
         .av{display:none}
         .chat.telegram{background:#c8d9b9}
         .telegram .bubble{border-radius:12px}
@@ -146,6 +147,11 @@ public static class ChatHtmlExporter
     {
         static string E(string? s) => HtmlReport.E(s);
         using var r = new HtmlReport(path, x.S, $"{x.A.Category} chat — {chat.Label}", Css, caseInfo: false);
+        if (x.O.Transcripts)
+        {
+            var notes = x.S.Tags.FileNotes();
+            r.TranscriptOf = m => TranscriptNotes.Body(TranscriptNotes.Lookup(notes, m) ?? "");
+        }
         var ms = chat.Messages;
         var times = ms.Select(m => m.Time).Where(t => t != "").ToList();
         // Contacts are looked up by the sender's identifier only (ChatParticipant.LookupId), never by the
@@ -184,6 +190,7 @@ public static class ChatHtmlExporter
         r.WriteLine("<tr><th colspan=\"2\">Report</th></tr>");
         Row("Made with", $"LEXIS {typeof(ChatHtmlExporter).Assembly.GetName().Version?.ToString(3)}");
         Row("Examiner tags and notes", x.O.TagsAndNotes ? $"Included ({ms.Count(m => x.Tags.ContainsKey(m.RowId)):N0} tagged messages)" : "Not included");
+        Row("Audio transcripts", x.O.Transcripts ? "Included" : "Not included");
         Row("Record reference", "Each message ends with its identifiers in the source database (e.g. Message ID), or its row in the parser's output when it has none");
         Row("Report generated", ValueFormatter.FormatTime(DateTimeOffset.UtcNow));
         r.WriteLine("</table>");
@@ -233,7 +240,7 @@ public static class ChatHtmlExporter
                         FormattableString.Invariant($"<a rel=\"noreferrer\" title=\"Opens openstreetmap.org\" href=\"https://www.openstreetmap.org/?mlat={p.Lat}&amp;mlon={p.Lon}#map=16/{p.Lat}/{p.Lon}\">map</a></div>"));
             if (m.Recovered != "") r.Write($"<div class=\"recnote\">&#9851; Recovered: {E(m.Recovered)}</div>");
             if (x.Tags.GetValueOrDefault(m.RowId) is { } t)
-                r.Write($"<div class=\"tagnote\">Examiner tag: {E(t.Tag)}{(t.Note != "" ? $" · Note: {E(t.Note)}" : "")}</div>");
+                r.Write($"<div class=\"tagnote\">Examiner tag: {E(t.Tag)}{(TagStore.WithoutTranscript(t.Note) is { Length: > 0 } note ? $" · Note: {E(note)}" : "")}</div>");
             r.WriteLine($"<div class=\"foot\">{E(string.Join(" · ", new[] { m.Time, m.SourceRecord != "" ? m.SourceRecord : $"parser row {m.RowId}" }.Where(t => t != "")))}</div></div></div></div>");
         }
         r.WriteLine($"</div>{Pager}");

@@ -58,11 +58,47 @@ public static class EvidenceOrigin
     {
         if (string.IsNullOrWhiteSpace(path)) return "";
         var p = path.Trim().Replace('\\', '/').TrimStart('/');
+        if (AfcMedia(p) is { } media) p = media; // UFED/UFADE: "iPhoneDump/AFC Service/DCIM/a.jpg"
         var segs = p.Split('/', 3);
         // an extraction folder ("Dump/data/…") goes; an iOS backup domain ("AppDomain-com.x/Library/…", "mobile/…") is part of the path
         if (segs.Length > 2 && !DeviceRoots.Contains(segs[0]) && DeviceRoots.Contains(segs[1]) && !segs[0].Contains("Domain") && segs[0] != "mobile")
             p = p[(segs[0].Length + 1)..];
         return DeviceRoots.Contains(p.Split('/')[0]) ? "/" + p : p;
+    }
+
+    /// <summary>A UFED/UFADE <c>AFC Service</c> path (under the zip root or under <c>iPhoneDump/</c>) is the media
+    /// directory. Null when the marker is nested deeper than one container folder.</summary>
+    static string? AfcMedia(string p)
+    {
+        const string marker = "AFC Service/";
+        var i = p.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (i < 0) return null;
+        var head = i == 0 ? "" : p[..(i - 1)];
+        if (head.Contains('/')) return null;
+        return "private/var/mobile/Media/" + p[(i + marker.Length)..];
+    }
+
+    /// <summary>Index keys an iTunes backup may use for a path iLEAPP recorded as <c>private/var/...</c>
+    /// (<see cref="BackupDomains"/>). The path itself is included; a domain path is left as it is.</summary>
+    public static IEnumerable<string> BackupKeys(string? path)
+    {
+        var p = (path ?? "").Trim().Replace('\\', '/').TrimStart('/');
+        if (p == "") yield break;
+        yield return p;
+        foreach (var (domain, root) in BackupDomains.OrderByDescending(kv => kv.Value.Length))
+        {
+            var prefix = root.Trim('/');
+            if (domain.EndsWith('-'))
+            {
+                if (!p.StartsWith(prefix + "/", StringComparison.OrdinalIgnoreCase)) continue;
+                var rest = p[(prefix.Length + 1)..];
+                var slash = rest.IndexOf('/');
+                if (slash <= 0) continue;
+                yield return domain + rest[..slash] + "/" + rest[(slash + 1)..];
+            }
+            else if (p.StartsWith(prefix + "/", StringComparison.OrdinalIgnoreCase))
+                yield return domain + p[prefix.Length..];
+        }
     }
 
     /// <summary>iLEAPP's backup domains and the folders it records their files under (ILEAPP/scripts/search_files.py, domains);

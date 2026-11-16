@@ -1424,6 +1424,234 @@ public class CoreTests : IDisposable
         Assert.False(pc.Extraction.Contains("Dump/data/data/com.example.chat/databases/chat.db"));
         Assert.Equal("Evidence", pc.Tags.FileTags()[photo]);
         Assert.True(pc.Package!.Intact);
+
+        // indexed as in the source file system: Case/extraction/<extraction path>, hashed, listed with device_path
+        using (var z = System.IO.Compression.ZipFile.OpenRead(zip))
+        {
+            var sums = new StreamReader(z.GetEntry("SHA256SUMS.txt")!.Open()).ReadToEnd();
+            foreach (var rel in new[] { photo, archive })
+            {
+                var entry = $"{PortableCase.CaseDir}/{PortableCase.ExtractionDir}/{rel}";
+                Assert.NotNull(z.GetEntry(entry));
+                Assert.Contains(entry, sums);
+            }
+            var photoSha = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes("jpeg bytes")));
+            Assert.Contains(photoSha, sums);
+        }
+        var manifest = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(pc.ManifestPath))!;
+        var listed = manifest["portable_case"]!["file_system"]!["files"]!.AsArray();
+        Assert.Contains(listed, f => (string?)f!["path"] == photo && (string?)f!["device_path"] == EvidenceOrigin.DevicePath(photo));
+        Assert.Contains(listed, f => (string?)f!["path"] == archive && (string?)f!["device_path"] == EvidenceOrigin.DevicePath(archive));
+        Assert.Equal("/data/media/0/DCIM/a.jpg", EvidenceOrigin.DevicePath(photo));
+        Assert.True(pc.Extraction.Contains(photo));
+        // the portable reader can resolve "Open in original folder" from the packaged tree
+        Assert.Equal(photo, TaggedFileNav.RevealRel(photo));
+        Assert.Equal("/data/media/0/DCIM", TaggedFileNav.FolderDevice(photo));
+    }
+
+    [Fact]
+    public void Portable_case_reports_a_tagged_file_that_cannot_be_read()
+    {
+        const string missing = "Dump/data/media/0/DCIM/gone.jpg";
+        var zip = Path.Combine(_c.Root, "missing-tagged.zip");
+        using (var s = CaseSession.Open(_c.Report))
+        {
+            s.Tags.SetFiles([missing], "Evidence");
+            var sel = new PortableSelection(new HashSet<string> { "get_chat" }, Media: false, TaggedFiles: true);
+            var fs = PortableCase.FileSystemFiles(s, sel);
+            Assert.Contains(PortableCase.MissingTaggedFiles(s, fs), p => p == missing);
+            var ex = Assert.Throws<IOException>(() => PortableCase.Build(s, zip, sel, null));
+            Assert.Contains("tagged file", ex.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains(EvidenceOrigin.DevicePath(missing), ex.Message);
+            s.Tags.SetFiles([missing], null);
+        }
+        Assert.False(File.Exists(zip));
+        Assert.False(File.Exists(zip + ".part"));
+    }
+
+    [Fact]
+    public void Portable_case_copies_whatsapp_messages_that_reference_media_with_and_without_media_files()
+    {
+        // A LAVA-like case whose WhatsApp Messages table declares FOREIGN KEY (media)
+        // REFERENCES _lava_media_references(id), and whose media references table has LAVA's
+        // FOREIGN KEY (media_item_id) REFERENCES _lava_media_items(id). One message points at a
+        // reference with no row, so reordering the copies would still fail if foreign keys were
+        // enforced. Only synthetic data.
+        var root = Path.Combine(Path.GetTempPath(), "AleappReaderTests", "pcfk_" + Guid.NewGuid().ToString("N"));
+        var report = Path.Combine(root, "ALEAPP_Reports_test");
+        Directory.CreateDirectory(Path.Combine(report, "media"));
+        File.WriteAllBytes(Path.Combine(report, "media", "pic.jpg"), [0xFF, 0xD8, 0xFF, 0xE0, 1, 2, 3]);
+        File.WriteAllText(Path.Combine(report, "_lava_data.lava"), """
+        {
+          "lava_schema_version": 2,
+          "parser_info": {"leapp_name": "ALEAPP", "leapp_version": "test"},
+          "param_input": "extraction.zip", "param_type": "zip", "param_profile": null,
+          "processing_status": "Complete",
+          "lava_db_name": "_lava_artifacts.db",
+          "modules": [{"module_name": "whatsapp", "module_status": "Complete"}],
+          "artifacts": {
+            "WhatsApp": [{
+              "artifact_key": "get_whatsapp_messages", "name": "WhatsApp - Messages",
+              "tablename": "get_whatsapp_messages", "module": "whatsapp",
+              "column_map": {"timestamp": "Timestamp", "body": "Body", "media": "Media"},
+              "record_count": 3,
+              "object_columns": [{"name": "timestamp", "type": "datetime"}, {"name": "media", "type": "media"}]
+            }]
+          }
+        }
+        """);
+        using (var con = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={Path.Combine(report, "_lava_artifacts.db")};Pooling=False"))
+        {
+            con.Open();
+            using (var off = con.CreateCommand()) { off.CommandText = "PRAGMA foreign_keys=OFF"; off.ExecuteNonQuery(); }
+            using var cmd = con.CreateCommand();
+            cmd.CommandText = """
+                CREATE TABLE _lava_media_items (id TEXT PRIMARY KEY, source_path TEXT, extraction_path TEXT, type TEXT,
+                  metadata TEXT, created_at INTEGER, updated_at INTEGER, is_embedded INTEGER);
+                CREATE TABLE _lava_media_references (id TEXT PRIMARY KEY, media_item_id TEXT, module_name TEXT,
+                  artifact_name TEXT, name TEXT,
+                  FOREIGN KEY (media_item_id) REFERENCES _lava_media_items(id));
+                CREATE VIEW _lava_media_info AS SELECT lmr.id as 'media_ref_id', lmr.media_item_id, lmr.module_name,
+                  lmr.artifact_name, lmr.name, lmi.source_path, lmi.extraction_path, lmi.type, lmi.metadata,
+                  lmi.created_at, lmi.updated_at, lmi.is_embedded
+                  FROM _lava_media_references as lmr LEFT JOIN _lava_media_items as lmi ON lmr.media_item_id = lmi.id;
+                CREATE TABLE "get_whatsapp_messages" ("timestamp" INTEGER, "body" TEXT, "media" TEXT,
+                  FOREIGN KEY ("media") REFERENCES _lava_media_references(id));
+                INSERT INTO _lava_media_items VALUES ('i1','/data/pic.jpg','media/pic.jpg','image/jpeg','',0,0,0);
+                INSERT INTO _lava_media_references VALUES ('ref1','i1','whatsapp','WhatsApp - Messages','pic.jpg');
+                INSERT INTO get_whatsapp_messages VALUES (1714557600,'hello','ref1');
+                INSERT INTO get_whatsapp_messages VALUES (1714557660,'no media',NULL);
+                INSERT INTO get_whatsapp_messages VALUES (1714557720,'orphaned media','gone');
+                """;
+            cmd.ExecuteNonQuery();
+        }
+
+        try
+        {
+            foreach (var media in new[] { true, false })
+            {
+                var zip = Path.Combine(root, media ? "with-media.zip" : "without-media.zip");
+                using (var s = CaseSession.Open(report))
+                    PortableCase.Build(s, zip, new PortableSelection(new HashSet<string> { "get_whatsapp_messages" }, Media: media), null);
+                using var pc = CaseSession.Open(zip);
+                var art = pc.Manifest.Artifacts.Single();
+                Assert.Equal("WhatsApp - Messages", art.Name);
+                Assert.Equal(3, art.RecordCount);
+                using var con = pc.OpenDb();
+                var page = ArtifactQuery.Query(con, art, new PageRequest());
+                Assert.Equal(3, page.Total);
+                Assert.Equal(3, page.Rows.Count);
+                using var count = con.CreateCommand();
+                count.CommandText = "SELECT count(*) FROM get_whatsapp_messages";
+                Assert.Equal(3L, (long)count.ExecuteScalar()!);
+                count.CommandText = "SELECT count(*) FROM _lava_media_references";
+                Assert.Equal(media ? 1L : 0L, (long)count.ExecuteScalar()!);
+                count.CommandText = "SELECT count(*) FROM _lava_media_items";
+                Assert.Equal(media ? 1L : 0L, (long)count.ExecuteScalar()!);
+                Assert.True(pc.Package!.Intact);
+            }
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try { Directory.Delete(root, true); } catch (IOException) { }
+        }
+    }
+
+    [Fact]
+    public void Portable_case_includes_transcripts_of_exported_audio_only_when_asked()
+    {
+        File.WriteAllBytes(Path.Combine(_c.Report, "media", "zzz.wav"), [1, 2, 3]);
+        using (var s = CaseSession.Open(_c.Report))
+        {
+            s.Tags.WriteFileTranscript("media/aaa.jpg", "hello <b>world</b>");
+            s.Tags.SetNote(TagStore.FilePrefix + "media/bbb.png", 0, "keep this\n\nTranscript (automatic):\nother take");
+            s.Tags.WriteFileTranscript("media/zzz.wav", "should not travel");
+            var ai = AiStore.For(s);
+            var p = new AiProvider("whisper.cpp", AiKind.WhisperCpp, "local");
+            var send = ai.LogSend(p, "base", "Transcribe", "aaa");
+            ai.Save(p, "base", "Transcription", "transcribe", "1 file", "[media#ref1]: hello <b>world</b>", ["[media#ref1]"], [], send);
+            ai.Save(p, "base", "Transcription", "transcribe", "1 file", "[media#other]: secret", ["[media#other]"], [], send);
+        }
+
+        string Zip(bool transcripts)
+        {
+            var zip = Path.Combine(_c.Root, transcripts ? "pc-tr-on.zip" : "pc-tr-off.zip");
+            var log = new List<string>();
+            using (var s = CaseSession.Open(_c.Report))
+                PortableCase.Build(s, zip, new PortableSelection(new HashSet<string> { "get_chat" }, Media: true, Transcripts: transcripts),
+                    null, log: new Progress<string>(log.Add));
+            Assert.Contains(log, l => l.Contains(transcripts ? "Audio transcripts: included" : "Audio transcripts: not included"));
+            return zip;
+        }
+
+        var off = Zip(false);
+        using (var pc = CaseSession.Open(off))
+        {
+            Assert.Contains("without audio transcripts", File.ReadAllText(pc.ManifestPath));
+            Assert.False(File.Exists(Path.Combine(pc.RootDir, AiStore.FileName)));
+            Assert.False(pc.Tags.FileNotes().ContainsKey("media/aaa.jpg"));
+            Assert.False(pc.Tags.FileNotes().ContainsKey("media/zzz.wav"));
+            Assert.Equal("keep this", pc.Tags.FileNotes()["media/bbb.png"]);
+            Assert.Equal("", Assert.Single(pc.Tags.All()).Tag);
+            Assert.DoesNotContain(pc.Tags.FileNotes().Values, n => n.Contains("Transcript (automatic):", StringComparison.Ordinal));
+        }
+
+        var on = Zip(true);
+        using (var pc = CaseSession.Open(on))
+        {
+            Assert.Contains("with audio transcripts", File.ReadAllText(pc.ManifestPath));
+            Assert.True(File.Exists(Path.Combine(pc.RootDir, AiStore.FileName)));
+            Assert.Equal("Transcript (automatic):\nhello <b>world</b>", pc.Tags.FileNotes()["media/aaa.jpg"]);
+            Assert.Equal("keep this\n\nTranscript (automatic):\nother take", pc.Tags.FileNotes()["media/bbb.png"]);
+            Assert.False(pc.Tags.FileNotes().ContainsKey("media/zzz.wav"));
+            var rows = AiStore.For(pc).Transcriptions();
+            Assert.Contains(rows, r => r.Cited.Contains("[media#ref1]"));
+            Assert.DoesNotContain(rows, r => r.Cited.Contains("[media#other]"));
+            Assert.True(pc.Package!.Intact);
+        }
+    }
+
+    [Fact]
+    public void Html_reports_show_transcripts_next_to_audio_only_when_asked()
+    {
+        using var s = CaseSession.Open(_c.Report);
+        s.Tags.WriteFileTranscript("media/aaa.jpg", "hello <b>world</b> &");
+        using var con = s.OpenDb();
+        var chat = s.Manifest.Artifacts.Single(a => a.TableName == "get_chat");
+        var one = ConversationBuilder.Build(con, s, chat, 100).Conversations.Single(c => c.Key == "1");
+
+        string Chat(bool transcripts)
+        {
+            var p = Path.Combine(_c.Root, $"chat-tr-{(transcripts ? "on" : "off")}.html");
+            ChatHtmlExporter.Write(p, s, chat, one, null, new ChatExportOptions(Transcripts: transcripts));
+            return File.ReadAllText(p);
+        }
+        var off = Chat(false);
+        Assert.Contains("<td>Audio transcripts</td><td>Not included</td>", off);
+        Assert.DoesNotContain("Transcript: ", off);
+        Assert.DoesNotContain("hello <b>world</b>", off);
+        Assert.DoesNotContain("hello &lt;b&gt;world&lt;/b&gt;", off);
+
+        var on = Chat(true);
+        Assert.Contains("<td>Audio transcripts</td><td>Included</td>", on);
+        Assert.Contains("Transcript: hello &lt;b&gt;world&lt;/b&gt; &amp;", on);
+        Assert.DoesNotContain("hello <b>world</b> &", on);
+
+        string Table(bool transcripts)
+        {
+            var p = Path.Combine(_c.Root, $"rows-tr-{(transcripts ? "on" : "off")}.html");
+            HtmlReportExporter.Write(p, s, [new ExportSection(chat.Name, ArtifactQuery.ExistingColumns(con, chat),
+                ArtifactQuery.All(con, chat, rowIds: [2]), Artifact: chat)], chat.Name, transcripts);
+            return File.ReadAllText(p);
+        }
+        var tableOff = Table(false);
+        Assert.Contains("<td>Audio transcripts</td><td>Not included</td>", tableOff);
+        Assert.DoesNotContain("Transcript: ", tableOff);
+        var tableOn = Table(true);
+        Assert.Contains("<td>Audio transcripts</td><td>Included</td>", tableOn);
+        Assert.Contains("Transcript: hello &lt;b&gt;world&lt;/b&gt; &amp;", tableOn);
+        Assert.DoesNotContain("hello <b>world</b> &", tableOn);
     }
 
     [Fact]

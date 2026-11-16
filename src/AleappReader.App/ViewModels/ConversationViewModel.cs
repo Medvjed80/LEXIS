@@ -212,6 +212,74 @@ public partial class ConversationViewModel : ObservableObject, IColumnFilters
         return ChatViewModel.ScopeOf(full, _a, full.Messages, "");
     }
 
+    /// <summary>The chats the examiner selected (the list passed from the view, else the current row). Empty when none is.</summary>
+    public List<ConversationItem> Chosen(object? parameter)
+    {
+        var chats = parameter switch
+        {
+            System.Collections.IList list => list.OfType<ConversationItem>().ToList(),
+            ConversationItem one => [one],
+            _ => [],
+        };
+        if (chats.Count == 0 && Selected is { } s) chats = [s];
+        return chats;
+    }
+
+    /// <summary>AI over just these chats: every message and its attachments, not the other chats of the artifact.</summary>
+    public async Task<AiScope> SelectionScope(IReadOnlyList<ConversationItem> chats)
+    {
+        if (chats.Count == 1) return await WholeChat(chats[0]);
+        var full = (await Complete(_main, _s, _a, _truncated, chats)).ToList();
+        if (full.Count == 0) full = [.. chats];
+        var messages = full.SelectMany(c => c.Messages).ToList();
+        return new AiScope($"{full.Count:N0} selected chats of {_a.Name} · {messages.Count:N0} messages",
+            [new AiSelection(_a, messages.Select(m => m.RowId).ToList())],
+            messages.SelectMany(m => m.Media).DistinctBy(m => m.RefId).ToList(),
+            string.Join("\n\n", full.Select(c => AiText.ChatHeader(c, _a, c.Messages))));
+    }
+
+    /// <summary>Opens the AI window on the selected chats only.</summary>
+    [RelayCommand]
+    async Task AnalyzeSelection(object? selected)
+    {
+        var chats = Chosen(selected);
+        if (chats.Count == 0) { _main.Status = "Select one or more chats first."; return; }
+        _main.Status = chats.Count == 1 ? "Reading the selected chat…" : $"Reading {chats.Count:N0} selected chats…";
+        var scope = await SelectionScope(chats);
+        _main.Status = "";
+        _main.OpenAi(_s, scope);
+    }
+
+    /// <summary>Transcribes the voice and audio messages of the selected chats only. Each transcript is also saved as that file's note.</summary>
+    [RelayCommand]
+    async Task TranscribeSelection(object? selected)
+    {
+        var chats = Chosen(selected);
+        if (chats.Count == 0) { _main.Status = "Select one or more chats first."; return; }
+        _main.Status = "Reading the audio of the selected chats…";
+        var scope = await SelectionScope(chats);
+        var audio = scope.Media.Where(m => m.Kind == "audio" && m.Exists).ToList();
+        _main.Status = "";
+        if (audio.Count == 0) { _main.Status = "The selected chats have no voice or audio messages in the report."; return; }
+        var text = $"audio of {chats.Count:N0} selected chat{(chats.Count == 1 ? "" : "s")} of {_a.Name} ({audio.Count:N0} file{(audio.Count == 1 ? "" : "s")})";
+        if (_main.OpenAi(_s, scope with { Text = text, Media = audio }) is { } vm) _ = vm.TranscribeCommand.ExecuteAsync(null);
+    }
+
+    /// <summary>Transcribes the voice and audio messages of every chat in the list (the filter included).</summary>
+    [RelayCommand]
+    async Task TranscribeAll()
+    {
+        var chats = Conversations.ToList();
+        if (chats.Count == 0) { _main.Status = "No chats in this list."; return; }
+        _main.Status = "Reading the audio of the chats in this list…";
+        var scope = await SelectionScope(chats);
+        var audio = scope.Media.Where(m => m.Kind == "audio" && m.Exists).ToList();
+        _main.Status = "";
+        if (audio.Count == 0) { _main.Status = "The chats in this list have no voice or audio messages in the report."; return; }
+        var text = $"audio of {chats.Count:N0} chats of {_a.Name} ({audio.Count:N0} file{(audio.Count == 1 ? "" : "s")})";
+        if (_main.OpenAi(_s, scope with { Text = text, Media = audio }) is { } vm) _ = vm.TranscribeCommand.ExecuteAsync(null);
+    }
+
     [RelayCommand]
     async Task ExportChat()
     {
@@ -233,12 +301,13 @@ public partial class ConversationViewModel : ObservableObject, IColumnFilters
     public static async Task<string?> ExportChats(CaseSession s, ArtifactInfo a, IReadOnlyList<ConversationItem> chats, string? selection)
     {
         if (chats.Count == 0 || Views.ChatExportWindow.Ask(a, chats.Count) is not { } o) return null;
+        var transcripts = o.Transcripts ? ", with audio transcripts" : ", without audio transcripts";
         if (chats.Count == 1)
         {
             var save = new SaveFileDialog { Filter = "HTML chat report (*.html)|*.html", FileName = ChatHtmlExporter.FileName(chats[0].Label) + ".html" };
             if (save.ShowDialog() != true) return null;
             await Task.Run(() => ChatHtmlExporter.Write(save.FileName, s, a, chats[0], selection, o));
-            ExportLog.Add($"{a.Name}: chat {chats[0].Label} (HTML)", save.FileName, selection ?? "the whole chat", s);
+            ExportLog.Add($"{a.Name}: chat {chats[0].Label} (HTML)", save.FileName, (selection ?? "the whole chat") + transcripts, s);
             return $"Exported chat to {save.FileName}";
         }
         var folder = new OpenFolderDialog { Title = $"Folder for {chats.Count:N0} chat reports (a new subfolder is created)" };
@@ -246,7 +315,7 @@ public partial class ConversationViewModel : ObservableObject, IColumnFilters
         var dir = System.IO.Path.Combine(folder.FolderName, HtmlReportExporter.SafeName(a.Name) + $" chats {DateTime.Now:yyyy-MM-dd HHmmss}");
         System.IO.Directory.CreateDirectory(dir);
         var (written, failed) = await Task.Run(() => ChatHtmlExporter.WriteEach(dir, s, a, chats, selection, o));
-        ExportLog.Add($"{a.Name}: chats (HTML)", dir, $"{written.Count:N0} chats" + (failed.Count > 0 ? $", {failed.Count} failed" : ""), s);
+        ExportLog.Add($"{a.Name}: chats (HTML)", dir, $"{written.Count:N0} chats" + (failed.Count > 0 ? $", {failed.Count} failed" : "") + transcripts, s);
         return $"Exported {written.Count:N0} chats to {dir}" + (failed.Count > 0 ? $" — {failed.Count} failed: {string.Join("; ", failed)}" : "");
     }
 }

@@ -21,9 +21,11 @@
                 <CheckBox Content="Include file system" IsChecked="{Binding IncludeFileSystem}" Margin="0,2,18,2"
                           ToolTip="Copies the extraction's files into the case (Case/extraction), each checked against ALEAPP's copy: the recipient can browse them in Extraction Files"/>
                 <CheckBox IsChecked="{Binding IncludeTaggedFiles}" Margin="0,2,18,2" IsEnabled="{Binding HasTaggedFiles}"
-                          ToolTip="Copies the files tagged in Extraction Files or the gallery into the case's file system (a file inside an archive brings the archive), with their tags">
-                    <TextBlock><Run Text="Tagged files"/> <Run Text="{Binding TaggedFileCount, Mode=OneWay, StringFormat=({0:N0} tagged)}" Foreground="{StaticResource MutedBrush}"/></TextBlock>
+                          ToolTip="Copies the files tagged in Extraction Files or the gallery into the case's file system at their paths on the source file system (a file inside an archive brings the archive), with their tags. On by default when there are tagged files.">
+                    <TextBlock><Run Text="Include tagged files"/> <Run Text="{Binding TaggedFileCount, Mode=OneWay, StringFormat=({0:N0} tagged)}" Foreground="{StaticResource MutedBrush}"/></TextBlock>
                 </CheckBox>
+                <CheckBox Content="Include audio transcripts" IsChecked="{Binding IncludeTranscripts}" Margin="0,2,18,2"
+                          ToolTip="When on, the case carries automatic transcripts of the exported audio only. Off by default: no transcript text is copied."/>
             </WrapPanel>
             <TextBlock Margin="22,2,0,0" Text="{Binding FileSystemText}" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"
                        Visibility="{Binding IncludeFileSystem, Converter={StaticResource Vis}, ConverterParameter=invert}"/>

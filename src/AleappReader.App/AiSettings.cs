@@ -86,6 +86,9 @@ public sealed class AiSettings
     public int VideoMaxFrames { get; set; } = 30;
     /// <summary>The video's audio track is transcribed too, when audio has an engine.</summary>
     public bool VideoTranscribe { get; set; } = true;
+    /// <summary>On opening a case, when whisper.cpp is the transcription engine, transcribe audio that has no transcript
+    /// yet and save each transcript in the file's note. A cloud engine is never started for this.</summary>
+    public bool AutoTranscribeNotes { get; set; } = true;
     /// <summary>whisper.cpp unless another speech-to-text server is chosen.</summary>
     public AiRole Transcription { get; set; } = new() { Provider = WhisperName };
     /// <summary>The Claude CLI executable; it runs only when allowed here and confirmed at each run.</summary>

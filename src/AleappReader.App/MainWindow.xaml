@@ -93,6 +93,9 @@
         <!-- Status bar -->
         <Border DockPanel.Dock="Bottom" Background="{StaticResource ChromeBrush}" Padding="8,3">
             <DockPanel>
+                <Button DockPanel.Dock="Right" Content="Cancel transcription" Command="{Binding CancelAutoTranscribeCommand}"
+                        Margin="8,0,0,0" Padding="8,1" Visibility="{Binding AutoTranscribing, Converter={StaticResource Vis}}"
+                        ToolTip="Stop the automatic transcription. Transcripts already saved stay in the files' notes."/>
                 <ProgressBar DockPanel.Dock="Right" Width="120" Height="10" IsIndeterminate="{Binding Busy}"
                              Visibility="{Binding Busy, Converter={StaticResource Vis}}"/>
                 <TextBlock Text="{Binding Status}" Foreground="#C9D3E0" TextTrimming="CharacterEllipsis" ToolTip="{Binding Status}"/>

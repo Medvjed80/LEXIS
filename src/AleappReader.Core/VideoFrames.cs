@@ -45,15 +45,21 @@ public static partial class VideoFrames
             var file = Path.Combine(folder, $"frame_{i:D3}.jpg");
             try
             {
-                await WhisperCpp.Exec(ffmpeg, ["-nostdin", "-hide_banner", "-loglevel", "error", "-y",
-                    "-ss", times[i].TotalSeconds.ToString("0.###", CultureInfo.InvariantCulture), "-i", video,
-                    "-frames:v", "1", "-vf", "scale='min(1280,iw)':-2", "-q:v", "3", file], folder, "ffmpeg", WhisperCpp.FfmpegLimit, ct);
+                await WhisperCpp.Exec(ffmpeg, JpegArguments(video, times[i], file), folder, "ffmpeg", WhisperCpp.FfmpegLimit, ct);
             }
             catch (AiException e) when (e is not AiTimeoutException) { } // a video that stalls ffmpeg once would stall every frame
             if (File.Exists(file)) got.Add((times[i], file));
         }
         return got;
     }
+
+    /// <summary>One JPEG. <c>-f image2</c> and <c>-c:v mjpeg</c> are set explicitly: the bundled ffmpeg has only that muxer and encoder.</summary>
+    public static IReadOnlyList<string> JpegArguments(string video, TimeSpan at, string file) =>
+    [
+        "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+        "-ss", at.TotalSeconds.ToString("0.###", CultureInfo.InvariantCulture), "-i", video,
+        "-frames:v", "1", "-vf", "scale='min(1280,iw)':-2", "-c:v", "mjpeg", "-q:v", "3", "-f", "image2", file,
+    ];
 
     /// <summary>The request for one frame: what is visible, any text read exactly.</summary>
     public static string Prompt(TimeSpan at, string language) =>

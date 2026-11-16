@@ -26,6 +26,7 @@ public sealed class ExtractionFiles : IDisposable
     readonly string? _dir;  // a plain folder: read straight from disk, not indexed
     readonly string? _tar;
     readonly bool _gz;
+    readonly bool _domains; // an iTunes backup: a private/var path iLEAPP recorded also matches Domain/relativePath
     readonly Dictionary<string, Entry> _entries = new(StringComparer.Ordinal); // every file: Android paths are case-sensitive
     readonly ILookup<string, string> _byName;
     readonly string _cache;
@@ -40,11 +41,11 @@ public sealed class ExtractionFiles : IDisposable
     public bool Locked { get; private init; }
 
     ExtractionFiles(string input, string kind, ZipArchive? zip = null, string? dir = null, string? tar = null, Dictionary<string, Entry>? index = null,
-                    Dictionary<int, byte[]>? classKeys = null, string prefix = "")
+                    Dictionary<int, byte[]>? classKeys = null, string prefix = "", bool domains = false)
     {
-        (Kind, _zip, _dir, _tar, _gz, _classKeys) = (kind, zip, dir, tar, kind == "tar.gz", classKeys);
+        (Kind, _zip, _dir, _tar, _gz, _classKeys, _domains) = (kind, zip, dir, tar, kind == "tar.gz", classKeys, domains);
         Name = Path.GetFileName(input.TrimEnd('\\', '/'));
-        if (zip is not null)
+        if (zip is not null && index is null)
             foreach (var e in zip.Entries)
                 if (e.FullName.StartsWith(prefix, StringComparison.Ordinal) && Normalize(e.FullName[prefix.Length..]) is { Length: > 0 } rel && !rel.EndsWith('/'))
                     _entries.TryAdd(rel, new Entry(e.Length, Zip: e));
@@ -76,21 +77,159 @@ public sealed class ExtractionFiles : IDisposable
             if (File.Exists(input))
             {
                 var name = input.ToLowerInvariant();
-                if (name.EndsWith(".zip")) return new ExtractionFiles(input, "zip", zip: ZipFile.OpenRead(input));
+                if (name.EndsWith(".zip")) return OpenZip(input, password);
                 if (name.EndsWith(".tar")) return new ExtractionFiles(input, "tar", tar: input, index: TarIndex(input, false));
                 if (name.EndsWith(".tar.gz") || name.EndsWith(".tgz")) return new ExtractionFiles(input, "tar.gz", tar: input, index: TarIndex(input, true));
                 return null;
             }
             if (!Directory.Exists(input)) return null;
-            if (BackupIndex(input) is { } backup) return new ExtractionFiles(input, "iTunes backup", index: backup);
+            if (BackupIndex(input) is { } backup) return new ExtractionFiles(input, "iTunes backup", index: backup, domains: true);
             if (!ItunesBackup.IsEncrypted(input)) return new ExtractionFiles(input, "folder", dir: input);
             if (password is null) return new ExtractionFiles(input, "encrypted iTunes backup", dir: input) { Locked = true };
             var (index, keys) = EncryptedBackupIndex(input, password);
-            return new ExtractionFiles(input, "encrypted iTunes backup", index: index, classKeys: keys);
+            return new ExtractionFiles(input, "encrypted iTunes backup", index: index, classKeys: keys, domains: true);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException or FormatException
                                       or Microsoft.Data.Sqlite.SqliteException) { }
         return null;
+    }
+
+    /// <summary>A plain zip, or a UFED/UFADE advanced logical zip: the iTunes backup inside it is indexed through
+    /// Manifest.db (decrypted with <paramref name="password"/> or the .ufd backup password), AFC Service files are
+    /// <c>private/var/mobile/Media/...</c>, and Applications and Lockdown Service stay as stored.</summary>
+    static ExtractionFiles OpenZip(string input, string? password)
+    {
+        var zip = ZipFile.OpenRead(input);
+        try
+        {
+            var snap = UfedLogical.Detect(zip);
+            if (snap is null) return new ExtractionFiles(input, "zip", zip: zip);
+            var pw = string.IsNullOrEmpty(password) ? UfdInfo.ForExtraction(input)?.BackupPassword : password;
+            if (string.IsNullOrEmpty(pw)) pw = null;
+            return OpenUfed(input, zip, snap, pw);
+        }
+        catch
+        {
+            zip.Dispose();
+            throw;
+        }
+    }
+
+    static ExtractionFiles OpenUfed(string input, ZipArchive zip, UfedLogical.Snapshot snap, string? password)
+    {
+        var byName = new Dictionary<string, ZipArchiveEntry>(StringComparer.OrdinalIgnoreCase);
+        foreach (var e in zip.Entries)
+        {
+            var n = UfedLogical.Norm(e.FullName);
+            if (n == "" || n.EndsWith('/') || n.Split('/').Contains("..")) continue;
+            byName.TryAdd(n, e);
+        }
+        var index = new Dictionary<string, Entry>(StringComparer.Ordinal);
+        Dictionary<int, byte[]>? keys = null;
+        var locked = false;
+        if (byName.TryGetValue(snap.Prefix + "Manifest.db", out var dbEntry))
+        {
+            byte[] head;
+            using (var s = dbEntry.Open()) head = Head(s, 16);
+            if (head.AsSpan().SequenceEqual("SQLite format 3\0"u8))
+                IndexPlainBackup(dbEntry, snap, byName, index);
+            else if (password is null) locked = true;
+            else
+            {
+                if (!byName.TryGetValue(snap.Prefix + "Manifest.plist", out var plistEntry))
+                    throw new InvalidDataException("The backup has no Manifest.plist.");
+                var plist = Bplist.Parse(ReadAll(plistEntry)) as Dictionary<string, object?>
+                            ?? throw new InvalidDataException("Manifest.plist cannot be read.");
+                if (plist.GetValueOrDefault("BackupKeyBag") is not byte[] keybag || plist.GetValueOrDefault("ManifestKey") is not byte[] manifestKey)
+                    throw new InvalidDataException("Manifest.plist has no keybag or no manifest key.");
+                keys = ItunesBackup.ClassKeys(keybag, password);
+                var tmp = Path.Combine(Path.GetTempPath(), "AleappReader", "backup", Guid.NewGuid().ToString("N") + ".db");
+                Directory.CreateDirectory(Path.GetDirectoryName(tmp)!);
+                try
+                {
+                    using (var src = dbEntry.Open())
+                    using (var plain = ItunesBackup.Decrypt(src, ItunesBackup.UnwrapClassed(keys, manifestKey), dbEntry.Length))
+                    using (var dst = File.Create(tmp))
+                    {
+                        plain.CopyTo(dst);
+                        if (dst.Length > 0)
+                        {
+                            dst.Position = dst.Length - 1;
+                            if (dst.ReadByte() is var pad and > 0 and <= 16) dst.SetLength(dst.Length - pad);
+                        }
+                    }
+                    IndexDecryptedBackup(tmp, snap, byName, index);
+                }
+                finally { File.Delete(tmp); }
+            }
+        }
+        foreach (var (name, entry) in byName)
+        {
+            if (name.StartsWith(snap.Prefix, StringComparison.OrdinalIgnoreCase)) continue;
+            if (AfcPath(name) is { } media) index.TryAdd(media, new Entry(entry.Length, Zip: entry));
+            else index.TryAdd(Normalize(name), new Entry(entry.Length, Zip: entry));
+        }
+        return new ExtractionFiles(input, "UFED advanced logical", zip: zip, index: index, classKeys: keys, domains: true) { Locked = locked };
+    }
+
+    /// <summary><c>iPhoneDump/AFC Service/DCIM/a.jpg</c> (or <c>AFC Service/...</c>) as <c>private/var/mobile/Media/DCIM/a.jpg</c>.</summary>
+    static string? AfcPath(string name)
+    {
+        const string marker = "AFC Service/";
+        var i = name.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (i < 0) return null;
+        var head = i == 0 ? "" : name[..(i - 1)];
+        if (head.Contains('/')) return null;
+        var rest = name[(i + marker.Length)..];
+        return rest == "" ? null : "private/var/mobile/Media/" + rest;
+    }
+
+    static void IndexPlainBackup(ZipArchiveEntry dbEntry, UfedLogical.Snapshot snap, Dictionary<string, ZipArchiveEntry> byName, Dictionary<string, Entry> index)
+    {
+        var tmp = Path.Combine(Path.GetTempPath(), "AleappReader", "backup", Guid.NewGuid().ToString("N") + ".db");
+        Directory.CreateDirectory(Path.GetDirectoryName(tmp)!);
+        try
+        {
+            using (var src = dbEntry.Open())
+            using (var dst = File.Create(tmp)) src.CopyTo(dst);
+            using var con = CaseSession.OpenReadOnly(tmp);
+            using var cmd = con.CreateCommand();
+            cmd.CommandText = "SELECT fileID, domain, relativePath FROM Files WHERE flags = 1";
+            using var rd = cmd.ExecuteReader();
+            while (rd.Read())
+            {
+                var id = rd.GetString(0);
+                if (!BackupFileId(id) || !byName.TryGetValue(snap.Prefix + id[..2] + "/" + id, out var file)) continue;
+                index.TryAdd(Normalize($"{rd.GetString(1)}/{rd.GetString(2)}"), new Entry(file.Length, Zip: file));
+            }
+        }
+        finally { File.Delete(tmp); }
+    }
+
+    static void IndexDecryptedBackup(string db, UfedLogical.Snapshot snap, Dictionary<string, ZipArchiveEntry> byName, Dictionary<string, Entry> index)
+    {
+        using var con = CaseSession.OpenReadOnly(db);
+        using var cmd = con.CreateCommand();
+        cmd.CommandText = "SELECT fileID, domain, relativePath, file FROM Files WHERE flags = 1";
+        using var rd = cmd.ExecuteReader();
+        while (rd.Read())
+        {
+            var id = rd.GetString(0);
+            if (!BackupFileId(id) || !byName.TryGetValue(snap.Prefix + id[..2] + "/" + id, out var file)) continue;
+            var rec = rd.IsDBNull(3) ? null : ItunesBackup.FileRecord((byte[])rd[3]);
+            index.TryAdd(Normalize($"{rd.GetString(1)}/{rd.GetString(2)}"),
+                         rec is { } r ? new Entry(r.Size, Zip: file, Key: r.Key) : new Entry(file.Length, Zip: file, Key: []));
+        }
+    }
+
+    static bool BackupFileId(string id) => id.Length >= 3 && id.All(char.IsAsciiHexDigit);
+
+    static byte[] ReadAll(ZipArchiveEntry e)
+    {
+        using var s = e.Open();
+        using var ms = new MemoryStream();
+        s.CopyTo(ms);
+        return ms.ToArray();
     }
 
     /// <summary>Every regular file of a tar and where its data starts; a tar.gz is decompressed once to list it.</summary>
@@ -231,13 +370,26 @@ public sealed class ExtractionFiles : IDisposable
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException or FormatException) { return default; }
     }
 
+    /// <summary>The index key for <paramref name="rel"/>: itself, or for an iTunes backup the Domain/relativePath of a
+    /// <c>private/var/...</c> path iLEAPP recorded. The path as given when nothing matches.</summary>
+    string KeyOf(string rel)
+    {
+        if (_entries.ContainsKey(rel)) return rel;
+        var n = Normalize(rel);
+        if (_entries.ContainsKey(n)) return n;
+        if (_domains)
+            foreach (var k in EvidenceOrigin.BackupKeys(n))
+                if (_entries.ContainsKey(k)) return k;
+        return rel;
+    }
+
     /// <summary>Whether the extraction has this file.</summary>
     public bool Contains(string rel) => SplitInside(rel) is not null ? InsideSize(rel) >= 0
-        : _dir is null ? _entries.ContainsKey(rel) : InDir(rel) is { } p && File.Exists(p);
+        : _dir is null ? _entries.ContainsKey(KeyOf(rel)) : InDir(rel) is { } p && File.Exists(p);
 
     /// <summary>The file's size; -1 when the extraction does not have it.</summary>
     public long SizeOf(string rel) => SplitInside(rel) is not null ? InsideSize(rel) :
-        _dir is null ? _entries.GetValueOrDefault(rel)?.Size ?? -1 : InDir(rel) is { } p && new FileInfo(p) is { Exists: true } f ? f.Length : -1;
+        _dir is null ? _entries.GetValueOrDefault(KeyOf(rel))?.Size ?? -1 : InDir(rel) is { } p && new FileInfo(p) is { Exists: true } f ? f.Length : -1;
 
     /// <summary>The file under the extraction folder; null for a path that would leave it ("..", rooted).</summary>
     string? InDir(string rel)
@@ -259,12 +411,14 @@ public sealed class ExtractionFiles : IDisposable
             using var f = File.OpenRead(InDir(rel) ?? throw new FileNotFoundException("Outside the extraction.", rel));
             return use(f);
         }
-        if (!_entries.TryGetValue(rel, out var e)) throw new FileNotFoundException("Not in the extraction.", rel);
+        if (!_entries.TryGetValue(KeyOf(rel), out var e)) throw new FileNotFoundException("Not in the extraction.", rel);
         if (e.Zip is not null)
             lock (_lock)
             {
                 using var z = e.Zip.Open();
-                return use(z);
+                if (e.Key is null) return use(z);
+                using var plain = ItunesBackup.Decrypt(z, ItunesBackup.UnwrapClassed(_classKeys!, e.Key), e.Size);
+                return use(plain);
             }
         if (e.File is not null)
         {
@@ -354,6 +508,21 @@ public sealed class ExtractionFiles : IDisposable
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException or FormatException) { return null; }
         finally { try { File.Delete(tmp); } catch (Exception e) when (e is IOException or UnauthorizedAccessException) { } }
+    }
+
+    /// <summary>A path already on this machine for the file: the extraction folder, a previous read-only copy, or an
+    /// unencrypted indexed file. Null when the file lives only in a zip or archive and has not been copied out yet,
+    /// so "Show in Explorer" is offered only when a local copy already exists.</summary>
+    public string? ExistingLocalCopy(string rel)
+    {
+        var name = string.Concat(Path.GetFileName(rel).Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '_' : c));
+        var target = Path.Combine(_cache, Hash(rel), name is "" or "." or ".." ? "file" : name);
+        if (File.Exists(target)) return target;
+        if (SplitInside(rel) is not null) return null;
+        if (_dir is not null) return InDir(rel) is { } p && File.Exists(p) ? p : null;
+        if (_entries.TryGetValue(KeyOf(rel), out var e) && e.File is not null && e.Key is null && File.Exists(e.File))
+            return e.File;
+        return null;
     }
 
     // ---- archives inside the extraction (zip, also APK/JAR/Office; tar; tar.gz; gz), browsed in place ----

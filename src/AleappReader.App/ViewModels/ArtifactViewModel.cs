@@ -458,9 +458,10 @@ public partial class ArtifactViewModel : ObservableObject, IRefreshable, IDispos
     [RelayCommand]
     async Task ExportHtml()
     {
+        if (Views.HtmlExportWindow.Ask() is not { } transcripts) return;
         var dlg = new SaveFileDialog { Filter = "HTML report (*.html)|*.html", FileName = HtmlReportExporter.SafeName(Artifact.Name) + ".html" };
         if (dlg.ShowDialog() != true) return;
-        await Export(dlg.FileName, (sec) => HtmlReportExporter.Write(dlg.FileName, _s, [sec], Artifact.Name));
+        await Export(dlg.FileName, (sec) => HtmlReportExporter.Write(dlg.FileName, _s, [sec], Artifact.Name, transcripts), transcripts);
     }
 
     static void WriteData(string path, ExportSection sec)
@@ -469,7 +470,7 @@ public partial class ArtifactViewModel : ObservableObject, IRefreshable, IDispos
         else CsvExporter.Write(path, sec);
     }
 
-    async Task Export(string path, Action<ExportSection> write)
+    async Task Export(string path, Action<ExportSection> write, bool? transcripts = null)
     {
         var (filter, columnFilters, described) = (Filter, _columnFilters.ToList(), Describe());
         await Task.Run(() =>
@@ -480,7 +481,8 @@ public partial class ArtifactViewModel : ObservableObject, IRefreshable, IDispos
                 _s.Tags.ForTable(Artifact.TableName), Artifact, described));
         });
         _main.Status = "Exported " + path;
-        ExportLog.Add($"{Artifact.Name} ({Path.GetExtension(path).TrimStart('.').ToUpperInvariant()})", path, described ?? "every record in view", _s);
+        var extra = transcripts is null ? "" : transcripts.Value ? ", with audio transcripts" : ", without audio transcripts";
+        ExportLog.Add($"{Artifact.Name} ({Path.GetExtension(path).TrimStart('.').ToUpperInvariant()})", path, (described ?? "every record in view") + extra, _s);
     }
 
     /// <summary>Exports the given records as an HTML report or CSV (a chat report for conversations).</summary>
@@ -496,18 +498,27 @@ public partial class ArtifactViewModel : ObservableObject, IRefreshable, IDispos
             if (await ConversationViewModel.ExportChats(_s, Artifact, chats, selection) is { } status) _main.Status = status;
             return;
         }
+        var html = false;
+        bool transcripts = false;
         var dlg = new SaveFileDialog { Filter = "HTML report (*.html)|*.html|CSV (*.csv)|*.csv|JSON (*.json)|*.json", FileName = HtmlReportExporter.SafeName(Artifact.Name) + " - selection" };
         if (dlg.ShowDialog() != true) return;
+        if (Path.GetExtension(dlg.FileName).Equals(".html", StringComparison.OrdinalIgnoreCase))
+        {
+            if (Views.HtmlExportWindow.Ask() is not { } inc) return;
+            html = true;
+            transcripts = inc;
+        }
         await Task.Run(() =>
         {
             using var con = _s.OpenDb();
             var sec = new ExportSection(Artifact.Name, ArtifactQuery.ExistingColumns(con, Artifact),
                 ArtifactQuery.All(con, Artifact, rowIds: ids), _s.Tags.ForTable(Artifact.TableName), Artifact, selection);
-            if (!Path.GetExtension(dlg.FileName).Equals(".html", StringComparison.OrdinalIgnoreCase)) WriteData(dlg.FileName, sec);
-            else HtmlReportExporter.Write(dlg.FileName, _s, [sec], Artifact.Name);
+            if (!html) WriteData(dlg.FileName, sec);
+            else HtmlReportExporter.Write(dlg.FileName, _s, [sec], Artifact.Name, transcripts);
         });
         _main.Status = $"Exported {ids.Count} records to {dlg.FileName}";
-        ExportLog.Add($"{Artifact.Name} ({Path.GetExtension(dlg.FileName).TrimStart('.').ToUpperInvariant()})", dlg.FileName, selection, _s);
+        var extra = html ? (transcripts ? ", with audio transcripts" : ", without audio transcripts") : "";
+        ExportLog.Add($"{Artifact.Name} ({Path.GetExtension(dlg.FileName).TrimStart('.').ToUpperInvariant()})", dlg.FileName, selection + extra, _s);
     }
 
     public void Dispose()

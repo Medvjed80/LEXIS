@@ -18,6 +18,6 @@ public partial class ChatExportWindow : Window
     public static ChatExportOptions? Ask(ArtifactInfo a, int chats)
     {
         var w = new ChatExportWindow(a, chats) { Owner = Application.Current.MainWindow };
-        return w.ShowDialog() == true ? new ChatExportOptions((ChatTheme)w.Theme.SelectedIndex, w.Tags.IsChecked == true) : null;
+        return w.ShowDialog() == true ? new ChatExportOptions((ChatTheme)w.Theme.SelectedIndex, w.Tags.IsChecked == true, w.Transcripts.IsChecked == true) : null;
     }
 }

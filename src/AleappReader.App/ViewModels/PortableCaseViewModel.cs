@@ -55,6 +55,7 @@ public partial class PortableCaseViewModel : ObservableObject
     public int TaggedFileCount { get; }
     public bool HasTaggedFiles => TaggedFileCount > 0;
     [ObservableProperty] private bool includeTaggedFiles;
+    [ObservableProperty] private bool includeTranscripts;
     [ObservableProperty] private string fileSystemText = "";
     int _estimate;
     [ObservableProperty] private string zipPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop),
@@ -70,7 +71,7 @@ public partial class PortableCaseViewModel : ObservableObject
         _s = s;
         TaggedCount = s.Tags.All().Count(t => !t.TableName.StartsWith(TagStore.FilePrefix, StringComparison.Ordinal));
         TaggedFileCount = s.Tags.FileTags().Count;
-        includeTaggedFiles = TaggedFileCount > 0;
+        includeTaggedFiles = true; // Include tagged files is on by default; the box is enabled when some exist
         var counted = s.Manifest.Artifacts.Any(a => a.RecordCount > 0);
         var order = MacroCategories.All.ToList();
         Groups = s.Manifest.Artifacts.Where(a => !counted || a.RecordCount > 0).GroupBy(MacroCategories.Of).OrderBy(g => order.IndexOf(g.Key))
@@ -95,7 +96,8 @@ public partial class PortableCaseViewModel : ObservableObject
     {
         var chosen = AllItems.Where(i => i.IsChecked).Select(i => i.Artifact.TableName).ToHashSet();
         return new PortableSelection(chosen.Count == AllItems.Count() ? null : chosen, TaggedOnly, IncludeMedia,
-            !IncludeFileSystem ? FileSystemScope.None : AllRead ? FileSystemScope.AllRead : FileSystemScope.Sources, IncludeTaggedFiles && TaggedFileCount > 0);
+            !IncludeFileSystem ? FileSystemScope.None : AllRead ? FileSystemScope.AllRead : FileSystemScope.Sources,
+            IncludeTaggedFiles && TaggedFileCount > 0, IncludeTranscripts);
     }
 
     /// <summary>What "Include file system" adds, counted off the UI thread; a later change drops an older count.</summary>

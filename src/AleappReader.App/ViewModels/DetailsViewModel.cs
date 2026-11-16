@@ -53,6 +53,10 @@ public partial class DetailsViewModel(MainViewModel main) : ObservableObject
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(CanTag))]
     [NotifyCanExecuteChangedFor(nameof(SaveTagCommand), nameof(RemoveTagCommand))]
     private (ArtifactInfo Artifact, long RowId)? tagKey;
+    /// <summary>The extraction path of a file tagged as <c>file:&lt;path&gt;</c>, when the details show that file.</summary>
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(CanTag))]
+    [NotifyCanExecuteChangedFor(nameof(SaveTagCommand), nameof(RemoveTagCommand))]
+    private string? fileTagPath;
     /// <summary>The device of the record or file shown.</summary>
     CaseSession? _s;
     [ObservableProperty] private string tag = "";
@@ -61,7 +65,7 @@ public partial class DetailsViewModel(MainViewModel main) : ObservableObject
     /// <summary>The record's original HTML (an email body), shown in a sandboxed browser: no scripts, no network.</summary>
     [ObservableProperty] private string? html;
 
-    public bool CanTag => TagKey is not null;
+    public bool CanTag => TagKey is not null || FileTagPath is not null;
     /// <summary>The record behind a timeline event, opened in its artifact table by "Open record".</summary>
     [ObservableProperty] private (ArtifactInfo Artifact, long RowId)? source;
 
@@ -110,18 +114,43 @@ public partial class DetailsViewModel(MainViewModel main) : ObservableObject
     /// <summary>The item's AI analyses, in the AI Analysis tab.</summary>
     Task AddAiAsync() => LoadAnalysesAsync();
 
-    /// <summary>After an AI run: the analyses of the item shown, as now saved, and its summary written again when they changed.</summary>
-    public void RefreshAi() => _ = LoadAnalysesAsync(ran: true);
+    /// <summary>After an AI run: the analyses of the item shown, as now saved, and its summary written again when they changed.
+    /// A transcription also refreshes the file note shown with the item.</summary>
+    public void RefreshAi()
+    {
+        if (_s is { } s && _noted.Count > 0) ShowFileNotes(s, _noted);
+        _ = LoadAnalysesAsync(ran: true);
+    }
+
+    /// <summary>The notes of the files shown (a transcript written on an audio file), under "File note".</summary>
+    void ShowFileNotes(CaseSession s, IEnumerable<MediaRef> media)
+    {
+        for (var i = Fields.Count - 1; i >= 0; i--)
+            if (Fields[i].Name == "File note" || Fields[i].Name.StartsWith("File note · ", StringComparison.Ordinal))
+                Fields.RemoveAt(i);
+        var list = media.Where(m => TranscriptNotes.Keys(m).Count > 0).DistinctBy(m => m.RefId + "\n" + m.Name).ToList();
+        _noted = list;
+        if (list.Count == 0) return;
+        var notes = s.Tags.FileNotes();
+        var found = list.Select(m => (m, TranscriptNotes.Lookup(notes, m))).Where(x => x.Item2 is { Length: > 0 }).ToList();
+        foreach (var (m, note) in found)
+            Fields.Add(new Field(found.Count == 1 ? "File note" : $"File note · {m.Name}", note!));
+    }
+
+    /// <summary>Files whose note is shown, so a transcription can refresh it.</summary>
+    List<MediaRef> _noted = [];
 
     public void Clear()
     {
         _shown++;
         _aiKeys = [];
+        _noted = [];
         Fields.Clear();
         Media.Clear();
         History.Clear();
         Title = Subtitle = Tag = Note = "";
         TagKey = null;
+        FileTagPath = null;
         _s = null;
         Source = null;
         (_sources, HasSources) = ([], false);
@@ -161,6 +190,7 @@ public partial class DetailsViewModel(MainViewModel main) : ObservableObject
         IsTagged = t is not null;
         Tag = t?.Tag ?? DefaultTag;
         Note = t?.Note ?? "";
+        ShowFileNotes(s, Media);
     }
 
     /// <summary>Photos the record names by path or file name (Photos.sqlite, MediaStore, Google Photos…) that are not
@@ -174,10 +204,11 @@ public partial class DetailsViewModel(MainViewModel main) : ObservableObject
         var found = await Task.Run(() => s.Extraction is not { } x ? [] :
             texts.Select(t => x.Find(t, texts)).OfType<string>().Distinct()
                 .Where(rel => x.ToMedia(rel).Kind is "image" or "video" or "audio").Take(4)
-                .Select(rel => x.CopyOut(rel) is { } copy ? x.ToMedia(rel, copy) : null).OfType<MediaRef>().ToList());
+                .Select(rel => x.CopyOut(rel) is { } copy ? x.ToMedia(rel, copy) with { AudioFolders = SilkAudio.Folders(s) } : null).OfType<MediaRef>().ToList());
         if (TagKey != key) return; // another record is shown by now
         var added = found.Where(m => !Media.Any(x => string.Equals(x.Name, m.Name, StringComparison.OrdinalIgnoreCase))).ToList();
         foreach (var m in added) Media.Add(m);
+        if (added.Count > 0) ShowFileNotes(s, Media);
         await AddMetadataAsync(added);
     }
 
@@ -307,14 +338,26 @@ public partial class DetailsViewModel(MainViewModel main) : ObservableObject
         Fields.Add(new Field("Path in the extraction", rel));
         Fields.Add(new Field("Size", $"{size:N0} bytes"));
         Fields.Add(new Field("Read by", readBy.Count == 0 ? "No artifact" : string.Join("\n", readBy.Select(a => $"{a.Name} ({a.Category})"))));
+        BindFileTag(s, rel);
         if (s.Extraction is { } x)
         {
             _aiKeys = [(AiText.Key("media", x.ToMedia(rel).RefId), null)];
             ShowTexts(s, rel, _aiKeys[0].Key);
             _ = AddAiAsync();
         }
+        ShowFileNotes(s, [s.Extraction?.ToMedia(rel) ?? new MediaRef("", Path.GetFileName(rel), null, rel, null, null, "", "")]);
         (_sources, _sourcesTitle, HasSources) = ([rel], Title, true);
         _ = AddFileMediaAsync(s, rel);
+    }
+
+    /// <summary>The details' tag and note editor for a file of the extraction (the same key as Extraction Files and the gallery).</summary>
+    void BindFileTag(CaseSession s, string rel)
+    {
+        FileTagPath = TagStore.FileKey(rel);
+        var tags = s.Tags.FileTags();
+        IsTagged = tags.ContainsKey(FileTagPath);
+        Tag = IsTagged ? tags[FileTagPath] : DefaultTag;
+        Note = s.Tags.NoteOf(TagStore.FilePrefix + FileTagPath, 0) ?? "";
     }
 
     /// <summary>A picture, video, audio or PDF file of the extraction shown (and played) here, with its embedded metadata: from a
@@ -326,7 +369,7 @@ public partial class DetailsViewModel(MainViewModel main) : ObservableObject
         var sources = _sources;
         var copy = await Task.Run(() => x.CopyOut(rel));
         if (copy is null || !ReferenceEquals(sources, _sources)) return; // another file is shown by now
-        var m = x.ToMedia(rel, copy);
+        var m = x.ToMedia(rel, copy) with { AudioFolders = SilkAudio.Folders(s) };
         Media.Add(m);
         await AddMetadataAsync([m]);
     }
@@ -378,6 +421,7 @@ public partial class DetailsViewModel(MainViewModel main) : ObservableObject
         }
         Media.Add(m);
         _ = AddMetadataAsync([m]);
+        if (_s is { } noteSession) ShowFileNotes(noteSession, [m]);
         _aiKeys = [(AiText.Key("media", m.RefId), null)];
         // a file of the whole extraction keeps its text under its path in the extraction
         if (_s is { } ts && (ExtractionFiles.IsExtraction(m) ? m.SourcePath : m.ExtractionPath) is { Length: > 0 } rel) ShowTexts(ts, rel, _aiKeys[0].Key);
@@ -399,8 +443,17 @@ public partial class DetailsViewModel(MainViewModel main) : ObservableObject
     [RelayCommand(CanExecute = nameof(CanTag))]
     void SaveTag()
     {
-        if (TagKey is not { } k || _s is null) return;
-        _s.Tags.Set(k.Artifact.TableName, k.RowId, string.IsNullOrWhiteSpace(Tag) ? DefaultTag : Tag.Trim(), Note.Trim());
+        if (_s is null) return;
+        var tag = string.IsNullOrWhiteSpace(Tag) ? DefaultTag : Tag.Trim();
+        if (FileTagPath is { } path)
+        {
+            TaggedFileNav.SetFile(_s.Tags, path, tag, Note.Trim());
+            IsTagged = true;
+            main.OnFileTagChanged(_s);
+            return;
+        }
+        if (TagKey is not { } k) return;
+        _s.Tags.Set(k.Artifact.TableName, k.RowId, tag, Note.Trim());
         IsTagged = true;
         main.OnTagChanged(k.Artifact, [k.RowId], Tag);
     }
@@ -414,10 +467,29 @@ public partial class DetailsViewModel(MainViewModel main) : ObservableObject
         else Note = "";
     }
 
+    /// <summary>Follows a file tag set in the Tagged Items list or in Extraction Files.</summary>
+    public void SyncFileTag(CaseSession? s)
+    {
+        if (FileTagPath is not { } path || _s != s || _s is null) return;
+        var tags = _s.Tags.FileTags();
+        IsTagged = tags.ContainsKey(path);
+        if (IsTagged) Tag = tags[path];
+        Note = _s.Tags.NoteOf(TagStore.FilePrefix + path, 0) ?? "";
+    }
+
     [RelayCommand(CanExecute = nameof(CanTag))]
     void RemoveTag()
     {
-        if (TagKey is not { } k || _s is null) return;
+        if (_s is null) return;
+        if (FileTagPath is { } path)
+        {
+            TaggedFileNav.RemoveFiles(_s.Tags, [path]);
+            IsTagged = false;
+            Note = "";
+            main.OnFileTagChanged(_s);
+            return;
+        }
+        if (TagKey is not { } k) return;
         _s.Tags.Remove(k.Artifact.TableName, k.RowId);
         IsTagged = false;
         Note = "";

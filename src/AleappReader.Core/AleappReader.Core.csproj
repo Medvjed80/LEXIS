@@ -7,6 +7,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="AleappReader.Core.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="MetadataExtractor" Version="2.8.1" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
     <PackageReference Include="PdfPig" Version="0.1.16" />
@@ -17,14 +21,21 @@
     <EmbeddedResource Include="Resources/bip39-english.txt" LogicalName="bip39-english.txt" />
   </ItemGroup>
 
-  <ItemGroup>
+  <!-- Present in a full tree. A source drop that omits the binaries (size) still builds; the same items are included when the files are there. -->
+  <ItemGroup Condition="Exists('native/silk.dll')">
     <!-- SILK SDK decoder (x64), built by tools/silk/build.cmd from kn007/silk-v3-decoder 507be6b; licence notices in NOTICE -->
     <None Include="native/silk.dll" Link="silk.dll" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup Condition="Exists('native/ffmpeg.exe')">
     <!-- ffmpeg 9.0.2, decoders only (LGPL), built by tools/ffmpeg/build.sh; written out on first use, see WhisperCpp.BundledFfmpeg -->
     <EmbeddedResource Include="native/ffmpeg.exe" LogicalName="ffmpeg.exe" />
+  </ItemGroup>
+  <ItemGroup Condition="Exists('native/tesseract')">
     <!-- Tesseract 5.0 + Leptonica 1.82.0 (x64, from the Tesseract 5.2.0 NuGet package) and the Visual C++ runtime they
          need (app-local, from the Visual Studio redist folder); tessdata_fast 4.1.0 models written out on first use, see Ocr -->
     <None Include="native/tesseract/*.dll" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup Condition="Exists('native/tessdata')">
     <EmbeddedResource Include="native/tessdata/*.traineddata" LogicalName="tessdata/%(Filename)%(Extension)" />
   </ItemGroup>
 

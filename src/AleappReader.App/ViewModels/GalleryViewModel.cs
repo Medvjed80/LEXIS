@@ -341,7 +341,8 @@ public partial class GalleryViewModel : ObservableObject
 
     /// <summary>An extraction file is copied out (read-only, temp folder) so the viewer and "Open" work on a copy.</summary>
     async Task<MediaRef> Local(MediaRef m) =>
-        !m.Exists && ExtractionFiles.IsExtraction(m) && _s.Extraction is { } x && await Task.Run(() => x.CopyOut(m.SourcePath!)) is { } copy ? x.ToMedia(m.SourcePath!, copy) : m;
+        !m.Exists && ExtractionFiles.IsExtraction(m) && _s.Extraction is { } x && await Task.Run(() => x.CopyOut(m.SourcePath!)) is { } copy
+            ? x.ToMedia(m.SourcePath!, copy) with { AudioFolders = m.AudioFolders ?? SilkAudio.Folders(_s) } : m;
 
     /// <summary>Double-click: a picture, video, audio or PDF in its own window; any other file straight in its program.</summary>
     public async void Open(GalleryItem item)
@@ -400,12 +401,63 @@ public partial class GalleryViewModel : ObservableObject
     {
         var list = media.ToList();
         if (_s.Extraction is not { } x) return list;
-        return await Task.Run(() => list.Select(m => !m.Exists && ExtractionFiles.IsExtraction(m) && m.SourcePath is { } p && x.CopyOut(p) is { } copy ? x.ToMedia(p, copy) : m).ToList());
+        return await Task.Run(() => list.Select(m => !m.Exists && ExtractionFiles.IsExtraction(m) && m.SourcePath is { } p && x.CopyOut(p) is { } copy
+            ? x.ToMedia(p, copy) with { AudioFolders = m.AudioFolders ?? SilkAudio.Folders(_s) } : m).ToList());
+    }
+
+    /// <summary>The tiles the examiner selected (the list passed from the view, else the current tile).</summary>
+    List<GalleryItem> Chosen(object? parameter)
+    {
+        var items = parameter is System.Collections.IList list ? list.OfType<GalleryItem>().ToList() : [];
+        if (items.Count == 0 && Selected is { } s) items = [s];
+        return items;
+    }
+
+    /// <summary>Opens the AI window on the selected files only, not on every file left checked.</summary>
+    [RelayCommand]
+    async Task AnalyzeSelection(object? selected)
+    {
+        var items = Chosen(selected);
+        if (items.Count == 0) { _main.Status = "Select one or more files first."; return; }
+        _main.Status = "Reading the selected files…";
+        var media = await Readable(items.Select(i => i.Media));
+        _main.Status = "";
+        _main.OpenAi(_s, new AiScope($"{media.Count:N0} selected media file{(media.Count == 1 ? "" : "s")} of the gallery", [], media));
     }
 
     [RelayCommand] async Task Ai() { if (await Scope() is { } sc) _main.OpenAi(_s, sc); }
     [RelayCommand] async Task Describe() { if (await Scope() is { } sc && _main.OpenAi(_s, sc) is { } vm) _ = vm.DescribeImagesCommand.ExecuteAsync(null); }
-    [RelayCommand] async Task Transcribe() { if (await Scope() is { } sc && _main.OpenAi(_s, sc) is { } vm) _ = vm.TranscribeCommand.ExecuteAsync(null); }
+
+    /// <summary>Selected tiles when some are selected; otherwise the checked files (the older Transcribe button).</summary>
+    [RelayCommand]
+    async Task Transcribe(object? selected)
+    {
+        var picked = selected is System.Collections.IList list ? list.OfType<GalleryItem>().ToList() : [];
+        if (picked.Count > 0) { await TranscribeMedia(picked.Select(i => i.Media), "the selected files"); return; }
+        if (await Scope() is { } sc && _main.OpenAi(_s, sc) is { } vm) _ = vm.TranscribeCommand.ExecuteAsync(null);
+    }
+
+    /// <summary>Audio among the tiles selected in the gallery.</summary>
+    [RelayCommand]
+    async Task TranscribeSelected(object? selected)
+    {
+        var items = selected is System.Collections.IList list ? list.OfType<GalleryItem>().ToList() : [];
+        if (items.Count == 0) { _main.Status = "Select one or more files first."; return; }
+        await TranscribeMedia(items.Select(i => i.Media), "the selected files");
+    }
+
+    /// <summary>Every audio file the gallery's filters keep, checked or not.</summary>
+    [RelayCommand]
+    async Task TranscribeAll() => await TranscribeMedia(Filtered().Where(i => i.Media.Kind == "audio").Select(i => i.Media), "the gallery");
+
+    async Task TranscribeMedia(IEnumerable<MediaRef> media, string what)
+    {
+        var audio = media.Where(m => m.Kind == "audio").DistinctBy(m => m.RefId).ToList();
+        if (audio.Count == 0) { _main.Status = $"No audio in {what}."; return; }
+        var readable = await Readable(audio);
+        if (_main.OpenAi(_s, new AiScope($"audio of {what} ({readable.Count:N0} file{(readable.Count == 1 ? "" : "s")})", [], readable)) is { } vm)
+            _ = vm.TranscribeCommand.ExecuteAsync(null);
+    }
 
     bool CanNext() => (Page + 1) * PageSize < Total;
     bool CanPrev() => Page > 0;

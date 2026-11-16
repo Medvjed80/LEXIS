@@ -1,5 +1,66 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **Buildable ALEAPP and iLEAPP engines, and a more robust plugin list.** One failing
+  artifact module is logged to stderr and skipped, so it no longer empties the whole
+  plugin list. The PyInstaller build includes `scripts/lexis_artifacts` as data and as
+  hidden imports, and fails if PluginLoader does not register the LEXIS modules.
+  `ExtractionRunner` keeps the child's stderr (last ~20 lines) when a source checkout
+  cannot list its plugins, and a built exe without `plugins.json` says so in the UI
+  instead of showing an empty list. `build.ps1` accepts `-Python`, creates each tool's
+  `.venv` when missing, and writes `release\LEXIS-1.2.7-engines-win-x64.exe`.
+- **Open tagged files in their original folder.** In Tagged Items, a tagged file can be opened in Extraction
+  Files on its parent folder (the path on the device), with the file selected and visible; the extraction
+  tree is loaded if needed. *Open file* uses the existing viewer or preview, and *Show in Explorer* is offered
+  when a local copy already exists (toolbar, context menu, and double-click opens the original folder). From
+  the list and from the file once opened in its folder, the tag and note can be edited or the tag removed
+  in the details pane; the tagged list refreshes at once, and a file with no tags left disappears from it.
+  Several rows can be selected and untagged together. An automatic transcript still does not count as a tag.
+- **Portable case includes tagged files by default.** *Include tagged files* is on by default. Tagged files
+  are copied into the zip at `Case/extraction/` under the same source-file-system paths as *Include file
+  system* already uses, hashed in SHA256SUMS.txt, listed in the manifest `file_system` section with
+  `device_path`, and their tags and notes travel in the tags database so the portable reader shows them as
+  tagged and *Open in original folder* works on the packaged tree. A tagged file that cannot be read is
+  reported and the zip is not written. The *Include audio transcripts* choice still applies to notes.
+- **Transcripts land in the file's note.** When whisper.cpp (or the transcription engine) transcribes an audio
+  file, the text is written into that file's note, the same note the gallery and Extraction Files share. An
+  examiner's own note is kept and the transcript is appended under "Transcript (automatic):". A note that is only
+  a previous automatic transcript is replaced. The note shows on the file in the details, under the audio in a
+  chat. An automatic transcript alone does not make the file a tagged item.
+- **Audio transcripts in a Portable Case or HTML export, only when asked.** Both export dialogs have *Include audio
+  transcripts*, off by default. When on, the portable case carries the transcripts of the exported audio only (in
+  the notes and a filtered `_reader_ai.db`), and an HTML report prints each transcript next to its audio, escaped.
+  When off, no transcript text is copied: it is stripped from notes in the package and from HTML notes. The export
+  log and the portable-case manifest record the choice.
+- **AI on the current selection.** The chat list, the Media Gallery and Extraction Files can run AI on the
+  selected chats or files only (Ctrl+click, Shift+click), not on every row left checked. The chat list's
+  right-click AI does the same for one chat or several.
+- **Transcribe audio of selected chats.** *Transcribe audio* on the chat list transcribes the voice and audio
+  messages of the selected chats only, through the same whisper.cpp pipeline, and saves each transcript as that
+  file's note.
+- **UFADE and UFED advanced logical iOS extractions.** A `Apple_….zip` with a `.ufd` beside it
+  (`ExtractionType=AdvancedLogical`, `ZIPLogicalPath=iPhoneDump`) is detected with or without the UFD.
+  iLEAPP runs as `-t itunes` on the Snapshot backup staged read-only under the output folder; the backup
+  password from the UFD is passed with `--image_password_env` and is not put on the command line or in the log.
+  The report keeps the original zip as its evidence. Extraction Files opens the zip in place: the iTunes backup
+  through Manifest.db (decrypted with that password), `AFC Service` as `/private/var/mobile/Media`, and
+  Applications and Lockdown Service as stored. A `.ufd` is read as UTF-8, or as Windows cp1252 when it is not UTF-8.
+
+### Fixed
+- **Portable Case export no longer fails on WhatsApp Messages with a foreign key error.** A selected-artifact export copied message rows before the LAVA media tables, and Microsoft.Data.Sqlite enforces foreign keys; a table whose media column references `_lava_media_references` (or a media reference whose item is copied later, or omitted when media is left out) was rejected with `SQLite Error 19: FOREIGN KEY constraint failed`. The staging database now turns foreign-key enforcement off for the copy and keeps the original schema.
+- **Automatic transcripts no longer appear as tagged items.** Saving a transcript into a file's note kept a row in `_reader_tags.db` with an empty tag, so the file showed up in Tagged items, in tagged-only / tagged-files portable exports, and in reports. Only an explicit tag or a note the examiner writes counts as tagged. Existing cases are handled on read: a row that is only an automatic transcript stops counting as tagged, and the transcript text is kept.
+- **Audio preview no longer fails with ffmpeg -22.** The preview WAV is requested with `-f wav` and `-c:a pcm_s16le`, and the temporary file is named `.tmp.wav`. Video frames are requested with `-f image2` and `-c:v mjpeg`. The bundled ffmpeg has only those muxers and encoders, so a `.tmp` path was "Unable to choose an output format". When playback still fails, the preview shows ffmpeg's own message.
+- **Transcripts already in the case show up in the file's note.** Opening a case, and finishing any AI run, copies every saved transcription (as the examiner revised it) into that audio file's note. The examiner's own note is kept; an earlier automatic transcript is replaced; a note that already matches is left untouched. The same note is written under the file's extraction path and its path on the device, so the gallery, Extraction Files, the details pane and a chat bubble agree. The copy runs once, off the UI thread, and the details pane, the open chat and Tagged items refresh once when it finishes.
+- **Opening a large case no longer freezes.** Copying saved transcripts used to reload every AI result once per audio file, on the UI thread. It now reads the transcriptions once and writes the notes in one transaction, after the case has drawn. Automatic transcription starts only then, in the background, and files already transcribed are skipped with one query. Cancel stays on the status bar.
+- **Transcribe is on the gallery and the chat list, and can run on its own.** AI settings has *Transcribe audio automatically and save the transcript in the file's note* (on by default). With that on, and only when whisper.cpp is the transcription engine, opening a case transcribes audio that has no transcript yet. Progress is in the status bar, and *Cancel transcription* stops it. A cloud engine is never used for this. The Media Gallery and the chat list have *Transcribe selected audio* and *Transcribe all audio*. The gallery's *Transcribe* uses the selected tiles when some are selected, and the checked files otherwise.
+- **Chat-list AI compiles.** The selected-chats variable no longer clashes with the chat-list view model in the same method.
+- **iTunes sources recorded as `private/var/...`.** Those paths resolve to the backup's `Domain/relativePath` keys, so they are not reported absent.
+- **Audio plays in the preview.** Play and pause work on an audio file in the gallery, the details pane, a chat
+  bubble and the Extraction Files viewer, without opening each file in its own window. Formats the Windows player
+  cannot read (Opus, AMR, Ogg and the rest, besides SILK) are converted to WAV for listening. The original is only read.
+
 ## 1.2.5
 
 ### Added

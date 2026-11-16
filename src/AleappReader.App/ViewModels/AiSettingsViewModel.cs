@@ -167,6 +167,7 @@ public partial class AiSettingsViewModel : ObservableObject
     [ObservableProperty] private int videoSeconds;
     [ObservableProperty] private int videoMaxFrames;
     [ObservableProperty] private bool videoTranscribe;
+    [ObservableProperty] private bool autoTranscribeNotes;
     [ObservableProperty] private string message = "";
     public event Action? Done;
 
@@ -240,8 +241,8 @@ public partial class AiSettingsViewModel : ObservableObject
         var audio = Providers.FirstOrDefault(p => p.Name == s.Transcription.Provider) is { CanAudio: true } ? s.Transcription : new AiRole { Provider = AiSettings.WhisperName };
         Roles.Add(new AiRoleRow("Transcription (audio)", Providers) { Provider = audio.Provider, Model = audio.Model, IsTranscription = true });
         Roles.Add(new AiRoleRow("Video frames (empty: the vision model)", Providers) { Provider = s.Video.Provider, Model = s.Video.Model });
-        (videoByPercent, videoPercent, videoSeconds, videoMaxFrames, videoTranscribe) =
-            (s.VideoByPercent, s.VideoPercent, s.VideoSeconds, s.VideoMaxFrames, s.VideoTranscribe);
+        (videoByPercent, videoPercent, videoSeconds, videoMaxFrames, videoTranscribe, autoTranscribeNotes) =
+            (s.VideoByPercent, s.VideoPercent, s.VideoSeconds, s.VideoMaxFrames, s.VideoTranscribe, s.AutoTranscribeNotes);
         foreach (var t in s.Themes) Themes.Add(new AiThemeRow { Name = t.Name, Indicators = t.Indicators });
         parallelRequests = s.ParallelRequests;
         (claudePath, mcpAllowed, translateTo, answerLanguage, visionCategories, maxRecordsPerRequest) =
@@ -355,8 +356,8 @@ public partial class AiSettingsViewModel : ObservableObject
         ai.LocalEngine = Engine?.Name ?? "";
         ai.Providers = [.. servers.Select(p => p.ToSetting())];
         (ai.Text, ai.Vision, ai.Transcription, ai.Video) = (Roles[0].ToRole(), Roles[1].ToRole(), Roles[2].ToRole(), Roles[3].ToRole());
-        (ai.VideoByPercent, ai.VideoPercent, ai.VideoSeconds, ai.VideoMaxFrames, ai.VideoTranscribe) =
-            (VideoByPercent, Math.Clamp(VideoPercent, 1, 50), Math.Clamp(VideoSeconds, 1, 3600), Math.Clamp(VideoMaxFrames, 1, 200), VideoTranscribe);
+        (ai.VideoByPercent, ai.VideoPercent, ai.VideoSeconds, ai.VideoMaxFrames, ai.VideoTranscribe, ai.AutoTranscribeNotes) =
+            (VideoByPercent, Math.Clamp(VideoPercent, 1, 50), Math.Clamp(VideoSeconds, 1, 3600), Math.Clamp(VideoMaxFrames, 1, 200), VideoTranscribe, AutoTranscribeNotes);
         ai.ClaudePath = ClaudePath.Trim() is { Length: > 0 } c ? c : "claude";
         ai.ClaudeAllowed = Roles.Any(r => r.Provider == AiSettings.ClaudeName);
         ai.WhisperPath = WhisperPath.Trim();

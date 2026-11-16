@@ -56,6 +56,8 @@ public partial class ExtractionViewModel : ObservableObject
     AleappInstall? _engine;
     [ObservableProperty] private string engineStatus = "";
     public string? ResultManifest { get; private set; }
+    /// <summary>The original zip when this run staged a UFED advanced logical backup. The report records that zip, not the staging folder.</summary>
+    public string? EvidenceZip { get; private set; }
     public event Action? RequestClose;
 
     public ExtractionViewModel()
@@ -164,7 +166,13 @@ public partial class ExtractionViewModel : ObservableObject
         if (value.EndsWith(".ufd", StringComparison.OrdinalIgnoreCase))
         {
             if (ufd.Extraction is not { } x) { Append("The UFD names no extraction file found beside it."); return; }
-            if (x.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)) InputType = "zip";
+            if (UfedLogical.Choose(x) is { } staged)
+            {
+                ToolChoice = ToolChoices[1];
+                InputType = staged.InputType;
+                if (Password == "" && staged.Password is { Length: > 0 } pw) Password = pw;
+            }
+            else if (x.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)) InputType = "zip";
             InputPath = x; // re-enters with the zip, which finds this UFD again
             return;
         }
@@ -177,6 +185,13 @@ public partial class ExtractionViewModel : ObservableObject
         if (CaseNumber == "") CaseNumber = ufd.Get("Crime Case", "Case Identifier");
         if (Agency == "") Agency = ufd.Get("Crime Case", "Department");
         if (Examiner == "") Examiner = ufd.Get("Crime Case", "Examiner Name");
+        if (File.Exists(value) && UfedLogical.Choose(value) is { } ufed)
+        {
+            if (Tool != "ileapp") ToolChoice = ToolChoices[1];
+            if (InputType != ufed.InputType) InputType = ufed.InputType;
+            if (Password == "" && ufed.Password is { Length: > 0 } pw) Password = pw;
+            Append("UFED advanced logical extraction: iLEAPP reads the iTunes backup inside this zip. The backup password is taken from the UFD and is not written here.");
+        }
         Append($".ufd file found: {ufd.Path} — device {ufd.Get("General", "FullName")}, {ufd.Get("General", "ExtractionType")} extraction.");
     }
 
@@ -243,8 +258,10 @@ public partial class ExtractionViewModel : ObservableObject
         if (selected is { Count: 0 }) { Append("No module selected."); return; }
         var caseData = new Dictionary<string, string> { ["Case Number"] = CaseNumber, ["Agency"] = Agency, ["Examiner"] = Examiner }
             .Where(kv => kv.Value != "").ToDictionary();
-        var opts = new ExtractionOptions(InputType, InputPath, OutputDir, selected, caseData, NeedsPassword ? NullIfEmpty(Password) : null,
-            NullIfEmpty(Keychain));
+        EvidenceZip = null;
+        var input = InputPath;
+        var type = InputType;
+        var password = NeedsPassword ? NullIfEmpty(Password) : null;
 
         Running = true;
         Progress = 0;
@@ -272,13 +289,27 @@ public partial class ExtractionViewModel : ObservableObject
         timer.Start();
         try
         {
+            if (File.Exists(input) && UfedLogical.Choose(input) is { } ufed && type is "zip" or "itunes")
+            {
+                Append("UFED advanced logical: staging the iTunes backup. The zip and the .ufd stay the evidence.");
+                var staged = await UfedLogical.Stage(input, OutputDir, UfdInfo.ForExtraction(input), new Progress<string>(Append), _cts.Token);
+                EvidenceZip = Path.GetFullPath(input);
+                input = staged.Folder;
+                type = "itunes";
+                password ??= ufed.Password;
+            }
+            var opts = new ExtractionOptions(type, input, OutputDir, selected, caseData, password, NullIfEmpty(Keychain));
             ResultManifest = await ExtractionRunner.RunAsync(engine, opts, log, prog, _cts.Token);
+            if (EvidenceZip is { } ev)
+                try { UfedLogical.RememberEvidence(ResultManifest, ev); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+                { Append("Report written; its recorded input could not be set back to the zip: " + ex.Message); }
             Append("Done: " + ResultManifest);
             Running = false; // before closing, or the window's Closing handler sees a run still in progress
             RequestClose?.Invoke();
         }
         catch (OperationCanceledException) { Append("Cancelled."); }
-        catch (Exception e) when (e is InvalidOperationException or IOException or ArgumentException or System.ComponentModel.Win32Exception)
+        catch (Exception e) when (e is InvalidOperationException or IOException or ArgumentException or InvalidDataException or System.ComponentModel.Win32Exception)
         {
             Append("Failed: " + e.Message);
         }

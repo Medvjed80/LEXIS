@@ -60,8 +60,23 @@ public partial class ChatViewModel : ObservableObject
         People = chat.Participants.Select(p => new PersonView(p, null, null)).ToList();
         Translation = new TranslationView(s, a);
         checkedIds = chat.Messages.Select(m => m.RowId).ToHashSet();
+        fileNotes = new Dictionary<string, string>();
+        RefreshFileNotes();
         _ = LoadPeopleAsync();
         _ = Translation.LoadAsync();
+    }
+
+    /// <summary>Transcripts and other notes of the chat's audio files, by media ref id, shown under the file.</summary>
+    [ObservableProperty] private IReadOnlyDictionary<string, string> fileNotes;
+
+    /// <summary>Re-reads the notes of this chat's files (a transcription writes one when it finishes).</summary>
+    public void RefreshFileNotes()
+    {
+        var notes = _s.Tags.FileNotes();
+        var map = new Dictionary<string, string>();
+        foreach (var m in Chat.Messages.SelectMany(x => x.Media))
+            if (TranscriptNotes.Lookup(notes, m) is { } note) map[m.RefId] = note;
+        FileNotes = map;
     }
 
     async Task LoadPeopleAsync()

@@ -242,9 +242,22 @@ public sealed class AiStore(string path)
     /// <summary>The folder of the AI bases kept outside the case.</summary>
     public static string Folder => TagStore.LocalFolder("ai");
 
-    public static AiStore For(CaseSession s) => new(
-        string.Equals(System.IO.Path.GetDirectoryName(s.Tags.Path), s.RootDir, StringComparison.OrdinalIgnoreCase) && s.PackagePath is null
-            ? System.IO.Path.Combine(s.RootDir, FileName) : TagStore.LocalPath("ai", s.Tags.Path));
+    public static AiStore For(CaseSession s)
+    {
+        var beside = string.Equals(System.IO.Path.GetDirectoryName(s.Tags.Path), s.RootDir, StringComparison.OrdinalIgnoreCase) && s.PackagePath is null;
+        var path = beside ? System.IO.Path.Combine(s.RootDir, FileName) : TagStore.LocalPath("ai", s.Tags.Path);
+        // A portable case may ship a filtered _reader_ai.db; seed the local base once, as tags are seeded.
+        if (!beside && !File.Exists(path))
+        {
+            var shipped = System.IO.Path.Combine(s.RootDir, FileName);
+            if (File.Exists(shipped))
+            {
+                Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path)!);
+                File.Copy(shipped, path);
+            }
+        }
+        return new AiStore(path);
+    }
 
     /// <summary>Whether an MCP server may log to <paramref name="db"/> for this case: its own base, or one of the bases
     /// kept outside the case (a portable case's, opened by the parent from the zip).</summary>
@@ -319,6 +332,34 @@ public sealed class AiStore(string path)
                 r.GetString(5), r.GetString(6), r.GetString(7), r.GetString(8),
                 JsonSerializer.Deserialize<List<string>>(r.GetString(9)) ?? [], JsonSerializer.Deserialize<List<string>>(r.GetString(10)) ?? []));
         return list;
+    }
+
+    /// <summary>Speech-to-text results only, newest first. One query on <c>kind</c>, not every result in the base.</summary>
+    public IReadOnlyList<AiResult> Transcriptions()
+    {
+        if (!File.Exists(path)) return [];
+        using var con = Open();
+        using var cmd = con.CreateCommand();
+        cmd.CommandText = "SELECT id,output,cited FROM results WHERE kind = 'Transcription' ORDER BY id DESC";
+        using var r = cmd.ExecuteReader();
+        var list = new List<AiResult>();
+        while (r.Read())
+            list.Add(new AiResult(r.GetInt64(0), default, "Transcription", "", "", "", "", "", r.GetString(1),
+                JsonSerializer.Deserialize<List<string>>(r.GetString(2)) ?? [], []));
+        return list;
+    }
+
+    /// <summary>Every finished batch key, in one query.</summary>
+    public HashSet<string> DoneKeys()
+    {
+        var set = new HashSet<string>(StringComparer.Ordinal);
+        if (!File.Exists(path)) return set;
+        using var con = Open();
+        using var cmd = con.CreateCommand();
+        cmd.CommandText = "SELECT key FROM done";
+        using var r = cmd.ExecuteReader();
+        while (r.Read()) set.Add(r.GetString(0));
+        return set;
     }
 
     /// <summary>What the AI read in single files (descriptions with OCR, classifications, transcriptions), newest first.</summary>
@@ -1326,9 +1367,14 @@ public static class WhisperCpp
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
     });
 
+    /// <summary>Arguments for a 16 kHz mono PCM WAV. <c>-f wav</c> and <c>-c:a pcm_s16le</c> are set explicitly: the bundled
+    /// ffmpeg has only those muxers and encoders, so a path whose extension is not <c>.wav</c> would otherwise fail with -22.</summary>
+    public static IReadOnlyList<string> WavArguments(string input, string wav) =>
+        ["-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-i", input, "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", "-f", "wav", wav];
+
     /// <summary>Converts <paramref name="input"/> with <paramref name="ffmpeg"/> into the 16 kHz mono WAV whisper.cpp reads.</summary>
     public static Task ToWav(string ffmpeg, string input, string wav, CancellationToken ct) =>
-        Exec(ffmpeg, ["-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-i", input, "-ar", "16000", "-ac", "1", wav], Path.GetDirectoryName(wav)!, "ffmpeg", FfmpegLimit, ct);
+        Exec(ffmpeg, WavArguments(input, wav), Path.GetDirectoryName(wav)!, "ffmpeg", FfmpegLimit, ct);
 
     public static async Task<Transcript> Transcribe(string exe, string model, string fileName, byte[] audio, CancellationToken ct)
     {
@@ -1352,13 +1398,20 @@ public static class WhisperCpp
             var output = Path.Combine(work.FullName, "out");
             await Exec(exe, ["-m", modelPath, "-f", input, "-l", "auto", "-oj", "-of", output, "-np",
                              "-t", Math.Clamp(Environment.ProcessorCount - 1, 1, 8).ToString(CultureInfo.InvariantCulture)], work.FullName, "whisper-cli", WhisperLimit, ct);
-            var j = JsonNode.Parse(await File.ReadAllTextAsync(output + ".json", ct));
-            List<(TimeSpan At, string Text)> segs = [.. (j?["transcription"] as JsonArray ?? [])
-                .Select(s => (TimeSpan.FromMilliseconds((double?)s?["offsets"]?["from"] ?? 0), ((string?)s?["text"] ?? "").Trim())).Where(s => s.Item2 != "")];
-            return new(string.Join(" ", segs.Select(s => s.Text)), (string?)j?["result"]?["language"], segs);
+            return ReadTranscript(await File.ReadAllTextAsync(output + ".json", ct));
         }
         catch (Exception e) when (e is IOException or JsonException) { throw new AiException("whisper.cpp: " + e.Message); }
         finally { await TempWork.Delete(work); }
+    }
+
+    /// <summary>whisper.cpp's <c>-oj</c> file: <c>transcription[].text</c> and <c>offsets.from</c> (milliseconds),
+    /// <c>result.language</c>.</summary>
+    public static Transcript ReadTranscript(string json)
+    {
+        var j = JsonNode.Parse(json);
+        List<(TimeSpan At, string Text)> segs = [.. (j?["transcription"] as JsonArray ?? [])
+            .Select(s => (TimeSpan.FromMilliseconds((double?)s?["offsets"]?["from"] ?? 0), ((string?)s?["text"] ?? "").Trim())).Where(s => s.Item2 != "")];
+        return new(string.Join(" ", segs.Select(s => s.Text)), (string?)j?["result"]?["language"], segs);
     }
 
     /// <summary>What a program prints on its error stream, whatever its exit code.</summary>

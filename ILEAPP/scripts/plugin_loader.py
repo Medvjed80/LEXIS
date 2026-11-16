@@ -22,6 +22,7 @@ import pathlib
 import dataclasses
 import typing
 import importlib.util
+import sys
 
 # PLUGINPATH = pathlib.Path("./scripts/artifacts")
 # a bit long-winded to make compatible with PyInstaller
@@ -110,70 +111,76 @@ class PluginLoader:
         for py_file in plugin_path.glob("*.py"):
             if py_file.name == "__init__.py":
                 continue
-            mod = PluginLoader.load_module_lazy(py_file)
-            mod_artifacts = getattr(mod, '__artifacts_v2__', None) or getattr(mod, '__artifacts__', None)
-            if mod_artifacts is None:
-                continue  # no artifacts defined in this plugin
+            try:
+                self._load_plugin_file(plugin_path, py_file)
+            except Exception as exc:  # noqa: BLE001 — one bad module must not empty the list
+                print(f"Warning: skipped plugin {py_file}: {exc}", file=sys.stderr)
 
-            version = 2 if '__artifacts_v2__' in dir(mod) else 1  # determine the version
+    def _load_plugin_file(self, plugin_path: pathlib.Path, py_file: pathlib.Path):
+        mod = PluginLoader.load_module_lazy(py_file)
+        mod_artifacts = getattr(mod, '__artifacts_v2__', None) or getattr(mod, '__artifacts__', None)
+        if mod_artifacts is None:
+            return  # no artifacts defined in this plugin
 
-            for name, artifact in mod_artifacts.items():
-                if version == 2:
-                    category = artifact.get('category')
-                    search = artifact.get('paths')
-                    artifact_name = artifact.get('name')
-                    func = None
-                    # 1. Look for a wrapped function with the name of the dictionary
-                    for item_name in dir(mod):
-                        item = getattr(mod, item_name)
-                        if callable(item) and item_name == name and hasattr(item, '__wrapped__'):
-                            func = item
-                            break
+        version = 2 if '__artifacts_v2__' in dir(mod) else 1  # determine the version
 
-                    # 2. If no wrapped function, look for declared function
-                    if func is None:
-                        func_name = artifact.get('function')
-                        if func_name:
-                            func = getattr(mod, func_name, None)
+        for name, artifact in mod_artifacts.items():
+            if version == 2:
+                category = artifact.get('category')
+                search = artifact.get('paths')
+                artifact_name = artifact.get('name')
+                func = None
+                # 1. Look for a wrapped function with the name of the dictionary
+                for item_name in dir(mod):
+                    item = getattr(mod, item_name)
+                    if callable(item) and item_name == name and hasattr(item, '__wrapped__'):
+                        func = item
+                        break
 
-                    # 3. If neither above work, log the failure
-                    if func is None:
-                        print(f"Warning: No matching function found for artifact '{name}' in module '{py_file.stem}'")
-                        continue
+                # 2. If no wrapped function, look for declared function
+                if func is None:
+                    func_name = artifact.get('function')
+                    if func_name:
+                        func = getattr(mod, func_name, None)
 
-                    # Store the entire artifact dictionary as artifact_info
-                    artifact_info = artifact
-                    if func:
-                        func.artifact_info = artifact_info  # Attach artifact_info to the function
+                # 3. If neither above work, log the failure
+                if func is None:
+                    print(f"Warning: No matching function found for artifact '{name}' in module '{py_file.stem}'")
+                    continue
 
+                # Store the entire artifact dictionary as artifact_info
+                artifact_info = artifact
+                if func:
+                    func.artifact_info = artifact_info  # Attach artifact_info to the function
+
+            else:
+                # 4. If no v2, then use v1
+                artifact_name = name
+                category, search, func = artifact
+                artifact_info = {'category': category, 'paths': search}
+
+            # Check for duplicate plugin keys within the same artifact folder and error
+            # Identify duplicate plugin in alternate plugin folder and override standard
+            if name in self._plugins:
+                prev_path = self._plugin_sources[name]
+                if prev_path == plugin_path:
+                    raise KeyError(f"Duplicate plugin key: '{name}' in module '{py_file.stem}'")
                 else:
-                    # 4. If no v2, then use v1
-                    artifact_name = name
-                    category, search, func = artifact
-                    artifact_info = {'category': category, 'paths': search}
+                    print(f"Info: Overriding artifact key '{name}' from {prev_path.name} "
+                          f"with version from {plugin_path.name}/{py_file.name}")
 
-                # Check for duplicate plugin keys within the same artifact folder and error
-                # Identify duplicate plugin in alternate plugin folder and override standard
-                if name in self._plugins:
-                    prev_path = self._plugin_sources[name]
-                    if prev_path == plugin_path:
-                        raise KeyError(f"Duplicate plugin key: '{name}' in module '{py_file.stem}'")
-                    else:
-                        print(f"Info: Overriding artifact key '{name}' from {prev_path.name} "
-                              f"with version from {plugin_path.name}/{py_file.name}")
+            # Check for duplicate artifact names within the same artifact folder
+            if artifact_name in self._artifact_names:
+                prev_file, prev_path = self._artifact_names[artifact_name]
+                if prev_path == plugin_path:
+                    raise KeyError(f"Duplicate artifact name in {py_file.name}: "
+                                   f"'{artifact_name}' was also found in module '{prev_file}'")
 
-                # Check for duplicate artifact names within the same artifact folder
-                if artifact_name in self._artifact_names:
-                    prev_file, prev_path = self._artifact_names[artifact_name]
-                    if prev_path == plugin_path:
-                        raise KeyError(f"Duplicate artifact name in {py_file.name}: "
-                                       f"'{artifact_name}' was also found in module '{prev_file}'")
+            self._artifact_names[artifact_name] = (py_file.name, plugin_path)
+            self._plugin_sources[name] = plugin_path
 
-                self._artifact_names[artifact_name] = (py_file.name, plugin_path)
-                self._plugin_sources[name] = plugin_path
-
-                # Add artifact_info to PluginSpec
-                self._plugins[name] = PluginSpec(name, py_file.stem, category, search, func, artifact_info)
+            # Add artifact_info to PluginSpec
+            self._plugins[name] = PluginSpec(name, py_file.stem, category, search, func, artifact_info)
 
     @property
     def plugins(self) -> typing.Iterable[PluginSpec]:

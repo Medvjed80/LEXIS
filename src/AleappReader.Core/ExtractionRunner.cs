@@ -88,13 +88,42 @@ public static partial class ExtractionRunner
     /// <summary>The file build.ps1 writes beside a bundled aleapp.exe: ListScript's output for that build.</summary>
     public const string PluginsFile = "plugins.json";
 
+    /// <summary>The last lines of a child's stderr, trimmed, for an error the examiner can read.</summary>
+    public static string StderrTail(string? text, int lines = 20)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return "";
+        var all = text.Replace("\r\n", "\n").Replace('\r', '\n').TrimEnd().Split('\n');
+        var take = all.Length <= lines ? all : all[^lines..];
+        return string.Join("\n", take.Select(l => l.TrimEnd()));
+    }
+
+    /// <summary>Message when a source checkout did not print the plugin list.</summary>
+    public static string PluginListFailure(string name, string? stderr, int? exitCode = null)
+    {
+        var msg = name + " did not list its plugins. Check the Python environment.";
+        if (exitCode is int c && c != 0) msg += $" Exit code {c}.";
+        var tail = StderrTail(stderr);
+        return tail.Length == 0 ? msg : msg + "\n" + tail;
+    }
+
+    /// <summary>Message when a built exe has no plugins.json beside it.</summary>
+    public static string MissingPluginsFileMessage(string name, string? exePath)
+    {
+        var beside = exePath is not null
+            ? Path.Combine(Path.GetDirectoryName(exePath) ?? "", PluginsFile)
+            : PluginsFile;
+        return $"{name} is a built executable but {PluginsFile} was not found beside it ({beside}). " +
+               "The module list cannot be shown. Rebuild with build.ps1 so the list is written next to the exe.";
+    }
+
     /// <summary>Lists ALEAPP's plugins: from a source checkout, or from plugins.json beside a built aleapp.exe.</summary>
     public static async Task<IReadOnlyList<PluginInfo>> ListPluginsAsync(AleappInstall inst, CancellationToken ct = default)
     {
         if (!inst.IsSource)
         {
             var json = inst.AleappExe is null ? null : Path.Combine(Path.GetDirectoryName(inst.AleappExe)!, PluginsFile);
-            return json is not null && File.Exists(json) ? ParsePlugins(await File.ReadAllTextAsync(json, ct)) : [];
+            if (json is not null && File.Exists(json)) return ParsePlugins(await File.ReadAllTextAsync(json, ct));
+            throw new InvalidOperationException(MissingPluginsFileMessage(inst.Name, inst.AleappExe));
         }
         var script = Path.Combine(Path.GetTempPath(), $"aleapp_list_{Guid.NewGuid():N}.py");
         await File.WriteAllTextAsync(script, ListScript, ct);
@@ -103,11 +132,13 @@ public static partial class ExtractionRunner
             var psi = Psi(inst.PythonExe!, inst.AleappDir!);
             psi.ArgumentList.Add(script);
             using var p = Process.Start(psi)!;
-            var stdout = p.StandardOutput.ReadToEndAsync(ct);
-            _ = p.StandardError.ReadToEndAsync(ct);
+            var stdoutTask = p.StandardOutput.ReadToEndAsync(ct);
+            var stderrTask = p.StandardError.ReadToEndAsync(ct);
             await p.WaitForExitAsync(ct);
-            var line = (await stdout).Split('\n').Select(l => l.Trim()).LastOrDefault(l => l.StartsWith("@@PLUGINS@@"));
-            if (line is null) throw new InvalidOperationException(inst.Name + " did not list its plugins. Check the Python environment.");
+            var stdout = await stdoutTask;
+            var stderr = await stderrTask;
+            var line = stdout.Split('\n').Select(l => l.Trim()).LastOrDefault(l => l.StartsWith("@@PLUGINS@@"));
+            if (line is null) throw new InvalidOperationException(PluginListFailure(inst.Name, stderr, p.ExitCode));
             return ParsePlugins(line["@@PLUGINS@@".Length..]);
         }
         finally { File.Delete(script); }
@@ -132,39 +163,29 @@ public static partial class ExtractionRunner
         var temps = new List<string>();
         try
         {
-            var psi = inst.IsSource ? Psi(inst.PythonExe!, inst.AleappDir!) : Psi(inst.AleappExe!, Path.GetDirectoryName(inst.AleappExe)!);
-            if (inst.IsSource) psi.ArgumentList.Add(Path.Combine(inst.AleappDir!, inst.Tool + ".py"));
-            foreach (var a in new[] { "-t", o.InputType, "-i", o.InputPath, "-o", o.OutputDir }) psi.ArgumentList.Add(a);
-
+            string? profile = null, cd = null;
             if (o.Plugins is { Count: > 0 })
             {
-                var profile = Path.Combine(Path.GetTempPath(), $"reader_{Guid.NewGuid():N}.{(inst.Tool == "ileapp" ? "ilprofile" : "alprofile")}");
+                profile = Path.Combine(Path.GetTempPath(), $"reader_{Guid.NewGuid():N}.{(inst.Tool == "ileapp" ? "ilprofile" : "alprofile")}");
                 await File.WriteAllTextAsync(profile, JsonSerializer.Serialize(new { leapp = inst.Tool, format_version = 1, plugins = o.Plugins }), ct);
                 temps.Add(profile);
-                psi.ArgumentList.Add("-m"); psi.ArgumentList.Add(profile);
             }
             if (o.CaseData is { Count: > 0 })
             {
-                var cd = Path.Combine(Path.GetTempPath(), $"reader_{Guid.NewGuid():N}.lcasedata");
+                cd = Path.Combine(Path.GetTempPath(), $"reader_{Guid.NewGuid():N}.lcasedata");
                 await File.WriteAllTextAsync(cd, JsonSerializer.Serialize(new { leapp = "case_data", case_data_values = o.CaseData }), ct);
                 temps.Add(cd);
-                psi.ArgumentList.Add("-d"); psi.ArgumentList.Add(cd);
             }
+            if (!string.IsNullOrEmpty(o.Keychain) && !File.Exists(o.Keychain)) throw new ArgumentException("Key file not found: " + o.Keychain);
+            var args = Arguments(o, inst.Tool, profile, cd);
+            var psi = inst.IsSource ? Psi(inst.PythonExe!, inst.AleappDir!) : Psi(inst.AleappExe!, Path.GetDirectoryName(inst.AleappExe)!);
+            if (inst.IsSource) psi.ArgumentList.Add(Path.Combine(inst.AleappDir!, inst.Tool + ".py"));
+            foreach (var a in args) psi.ArgumentList.Add(a);
             if (!string.IsNullOrEmpty(o.ImagePassword))
-            {
-                // Passed through the environment, never on the command line where other processes can read it.
-                psi.Environment["ALEAPP_READER_IMAGE_PW"] = o.ImagePassword;
-                psi.ArgumentList.Add("--image_password_env"); psi.ArgumentList.Add("ALEAPP_READER_IMAGE_PW");
-            }
-            if (!string.IsNullOrEmpty(o.Keychain))
-            {
-                // The keys captured beside the extraction: an iOS keychain, or an Android keystore export
-                if (!File.Exists(o.Keychain)) throw new ArgumentException("Key file not found: " + o.Keychain);
-                psi.ArgumentList.Add(inst.Tool == "ileapp" ? "--keychain" : "--keystore"); psi.ArgumentList.Add(o.Keychain);
-            }
+                psi.Environment["ALEAPP_READER_IMAGE_PW"] = o.ImagePassword; // never on the command line, where other processes can read it
 
             var started = DateTime.UtcNow;
-            log.Report("> " + Path.GetFileName(psi.FileName) + " " + string.Join(" ", psi.ArgumentList.Select(a => a.Contains(' ') ? $"\"{a}\"" : a)));
+            log.Report("> " + Path.GetFileName(psi.FileName) + " " + string.Join(" ", args.Select(a => a.Contains(' ') ? $"\"{a}\"" : a)));
             using var p = new Process { StartInfo = psi, EnableRaisingEvents = true };
             var state = new RunProgress();
             void OnLine(string? line)
@@ -194,6 +215,18 @@ public static partial class ExtractionRunner
             return manifest ?? throw new FileNotFoundException(inst.Name + " finished but no LAVA manifest was written.", o.OutputDir);
         }
         finally { foreach (var t in temps) File.Delete(t); }
+    }
+
+    /// <summary>The arguments of one run. A backup password is not among them: it is passed only as the environment
+    /// variable named by <c>--image_password_env</c>.</summary>
+    public static IReadOnlyList<string> Arguments(ExtractionOptions o, string tool, string? profile, string? caseData)
+    {
+        var args = new List<string> { "-t", o.InputType, "-i", o.InputPath, "-o", o.OutputDir };
+        if (profile is not null) { args.Add("-m"); args.Add(profile); }
+        if (caseData is not null) { args.Add("-d"); args.Add(caseData); }
+        if (!string.IsNullOrEmpty(o.ImagePassword)) { args.Add("--image_password_env"); args.Add("ALEAPP_READER_IMAGE_PW"); }
+        if (!string.IsNullOrEmpty(o.Keychain)) { args.Add(tool == "ileapp" ? "--keychain" : "--keystore"); args.Add(o.Keychain); }
+        return args;
     }
 
     [GeneratedRegex("[0-9A-Fa-f]{40}|[0-9A-Fa-f]{8}-[0-9A-Fa-f]{16}")] private static partial Regex Udid();

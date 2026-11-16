@@ -288,6 +288,18 @@ public sealed class MediaNoteConverter : IMultiValueConverter
     public object[] ConvertBack(object? v, Type[] t, object? p, CultureInfo c) => throw new NotSupportedException();
 }
 
+/// <summary>The note stored on a file (a transcript), from [media, notes by media ref id]: the text, or with
+/// "visibility" whether to show it.</summary>
+public sealed class FileNoteConverter : IMultiValueConverter
+{
+    public object Convert(object?[] values, Type t, object? p, CultureInfo c)
+    {
+        var text = values is [MediaRef m, IReadOnlyDictionary<string, string> d, ..] ? d.GetValueOrDefault(m.RefId) : null;
+        return p is "visibility" ? string.IsNullOrEmpty(text) ? Visibility.Collapsed : Visibility.Visible : text ?? "";
+    }
+    public object[] ConvertBack(object? v, Type[] t, object? p, CultureInfo c) => throw new NotSupportedException();
+}
+
 /// <summary>Carries a DataContext to what is not in the visual tree (a DataGrid column's visibility).</summary>
 public sealed class BindingProxy : Freezable
 {

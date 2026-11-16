@@ -99,6 +99,8 @@
                         <ContentControl Content="{Binding Engine}" ContentTemplate="{StaticResource ServerModels}"/>
                     </StackPanel>
                 </Border>
+                <CheckBox Content="Transcribe audio automatically and save the transcript in the file's note" IsChecked="{Binding AutoTranscribeNotes}" Margin="0,0,0,8"
+                          ToolTip="On when whisper.cpp is set up. Opening a case then transcribes audio that has no transcript yet, on this computer only: a cloud engine is never used. Each transcript is saved in that audio file's note. Cancel from the status bar. Transcripts already in the AI base are copied into the notes either way."/>
 
                 <DockPanel Margin="0,10,0,4">
                     <Button DockPanel.Dock="Right" Style="{StaticResource FlatButton}" Content="Add endpoint" Command="{Binding AddProviderCommand}"/>

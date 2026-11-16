@@ -19,7 +19,8 @@ public sealed record AiScope(string Text, IReadOnlyList<AiSelection> Records, IR
 
 /// <summary>The AI window of one case: summary, questions, translation and thematic review of records; image
 /// classification and audio transcription; questions to the Claude CLI. Each answer is labelled and kept in the case's
-/// AI base with its citations, each send in its log; nothing here writes to the evidence, the tags or the notes.</summary>
+/// AI base with its citations, each send in its log. Nothing here writes to the evidence. A transcription is also
+/// written into that audio file's note (kept with the tags), without replacing a note the examiner wrote.</summary>
 public partial class AiViewModel : ObservableObject
 {
     static readonly string[] VisionMimes = ["image/jpeg", "image/png", "image/gif", "image/webp"];
@@ -654,6 +655,7 @@ public partial class AiViewModel : ObservableObject
                         var tr = await s.Client.Transcribe(s.Model, "audio.wav", bytes, ct);
                         said = tr.Segments.Count > 0 ? tr.Segments : tr.Text == "" ? [] : [(TimeSpan.Zero, tr.Text)];
                         heard = tr.Text == "" ? "\n\nAudio: no speech recognised." : tr.Language is { } l ? $"\n\nLanguage of the speech: {l}" : "";
+                        RememberTranscript(m, TranscriptNote(tr.Text, tr.Language));
                     }
                     catch (AiException e) { heard = $"\n\nAudio not transcribed: {e.Message}"; }
                 }
@@ -713,16 +715,25 @@ public partial class AiViewModel : ObservableObject
         }
         if (!Confirm(r.Provider, $"{Audio.Count:N0} audio files")) return;
         var folders = SilkAudio.Folders(_s);
+        var done = await Task.Run(() => _store.DoneKeys()); // one query, not IsDone per file
+        var pending = new List<MediaRef>();
+        MediaRef? oneSaved = null;
+        var savedCount = 0;
+        foreach (var m in Audio)
+        {
+            if (!done.Contains($"transcribe|{r.Provider.Name}|{r.Model}|{m.RefId}")) pending.Add(m);
+            else { savedCount++; oneSaved = m; }
+        }
+        // one file already transcribed: its note, from that one cite. Many: the single Apply at the end of the run.
+        if (savedCount == 1 && oneSaved is not null) RememberSavedTranscript(oneSaved);
         int n = 0;
         string? noTranscription = null;
         try
         {
-            await Each(Audio, ct, async (m, ct) =>
+            await Each(pending, ct, async (m, ct) =>
             {
                 n++;
-                var key = $"transcribe|{r.Provider.Name}|{r.Model}|{m.RefId}";
-                if (_store.IsDone(key)) return;
-                Status = $"Audio {n:N0} of {Audio.Count:N0}";
+                Status = $"Audio {n:N0} of {pending.Count:N0}";
                 // SILK (WeChat, QQ) goes as the WAV kept with the case: no engine reads SILK itself
                 var (bytes, name, silk) = await Task.Run(() => SilkAudio.ForTranscription(m, m.AudioFolders ?? folders), ct);
                 var sendId = _store.LogSend(r.Provider, r.Model, "Transcription",
@@ -735,9 +746,11 @@ public partial class AiViewModel : ObservableObject
                     noTranscription = e.Message;
                     throw new OperationCanceledException(); // the others stop: asked once below
                 }
+                var body = TranscriptNote(text, lang);
                 _store.Save(r.Provider, r.Model, "Transcription", "Speech to text", $"{m.Name} {AiText.Key("media", m.RefId)}",
-                            (text == "" ? "(no speech recognised)" : text) + (lang is null ? "" : $"\n\nLanguage: {lang}"), [AiText.Key("media", m.RefId)], [], sendId);
-                _store.MarkDone(key);
+                            body, [AiText.Key("media", m.RefId)], [], sendId);
+                _store.MarkDone($"transcribe|{r.Provider.Name}|{r.Model}|{m.RefId}");
+                RememberTranscript(m, body);
             });
         }
         catch (OperationCanceledException) when (noTranscription is { } left)
@@ -749,6 +762,16 @@ public partial class AiViewModel : ObservableObject
         }
         Status = "Done.";
     });
+
+    /// <summary>What is stored for one transcription: the words, or that none were recognised, and the language when known.</summary>
+    static string TranscriptNote(string text, string? language) =>
+        (text == "" ? "(no speech recognised)" : text) + (language is null ? "" : $"\n\nLanguage: {language}");
+
+    /// <summary>Puts this one transcript in the audio file's note. The open views refresh once, when the run ends.</summary>
+    void RememberTranscript(MediaRef m, string text) => TranscriptNotes.Write(_s.Tags, m, text);
+
+    /// <summary>One file already transcribed: that cite only, never a pass over every saved transcription.</summary>
+    void RememberSavedTranscript(MediaRef m) => TranscriptNotes.WriteSaved(_s.Tags, _store, m);
 
     /// <summary>Claude CLI, only when allowed in settings and confirmed now: it reads the case through LEXIS's read-only
     /// tools, and what it reads goes to Anthropic. Citations count as known when a tool answer of this run held them.</summary>

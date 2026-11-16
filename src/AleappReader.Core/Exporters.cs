@@ -107,6 +107,7 @@ sealed class HtmlReport : IDisposable
             .media img{max-width:220px;max-height:220px;display:block;margin:2px 0}
             .media video{max-width:320px;display:block}
             .src{color:#5b6672;font-size:11px}
+            .transcript{font-size:12px;color:#3b4a54;white-space:pre-wrap;word-break:break-word;margin-top:4px}
             @media print{h2,.origin{-webkit-print-color-adjust:exact;print-color-adjust:exact} }
             {{extraCss}}
             </style></head><body>
@@ -143,6 +144,10 @@ sealed class HtmlReport : IDisposable
         var s = string.Concat(name.Select(c => Path.GetInvalidFileNameChars().Contains(c) || char.IsSurrogate(c) || char.IsControl(c) ? '_' : c));
         return Reserved.Contains(s.Split('.')[0].Trim()) ? "_" + s : s;
     }
+
+    /// <summary>The transcript to print under a media file, already the examiner-facing text (HTML-escaped here).
+    /// Null or empty omits it.</summary>
+    public Func<MediaRef, string?>? TranscriptOf { get; set; }
 
     public void Write(string html) => _w.Write(html);
     public void WriteLine(string html) => _w.WriteLine(html);
@@ -206,6 +211,8 @@ sealed class HtmlReport : IDisposable
                 _ => $"<a href=\"{u}\" download>&#128206; {E(m.Name)}</a>",
             });
             if (!string.IsNullOrEmpty(m.SourcePath)) sb.Append($"<div class=\"src\">Source on the device: {E(EvidenceOrigin.DevicePath(m.SourcePath))}</div>");
+            if (TranscriptOf?.Invoke(m) is { Length: > 0 } transcript)
+                sb.Append($"<div class=\"transcript\">Transcript: {E(transcript)}</div>");
             sb.Append("</div>");
         }
         return sb.ToString();
@@ -232,10 +239,17 @@ public static class HtmlReportExporter
     /// <summary>A file name from device data, safe on Windows.</summary>
     public static string SafeName(string name) => HtmlReport.SafeName(name);
 
-    public static void Write(string path, CaseSession session, IEnumerable<ExportSection> sections, string title)
+    public static void Write(string path, CaseSession session, IEnumerable<ExportSection> sections, string title,
+                             bool transcripts = false)
     {
         static string E(string? s) => HtmlReport.E(s);
         using var report = new HtmlReport(path, session, title);
+        report.WriteLine($"<table class=\"meta\"><tr><td>Audio transcripts</td><td>{(transcripts ? "Included" : "Not included")}</td></tr></table>");
+        if (transcripts)
+        {
+            var notes = session.Tags.FileNotes();
+            report.TranscriptOf = m => TranscriptNotes.Body(TranscriptNotes.Lookup(notes, m) ?? "");
+        }
         using var con = session.OpenDb();
         var resolver = new MediaResolver(session);
 
@@ -260,7 +274,7 @@ public static class HtmlReportExporter
                 if (tagged)
                 {
                     var t = sec.Tags!.GetValueOrDefault(row.RowId);
-                    report.Write($"<td>{E(t?.Tag)}</td><td>{E(t?.Note)}</td>");
+                    report.Write($"<td>{E(t?.Tag)}</td><td>{E(t is null ? null : TagStore.WithoutTranscript(t.Note))}</td>");
                 }
                 report.WriteLine("</tr>");
             }

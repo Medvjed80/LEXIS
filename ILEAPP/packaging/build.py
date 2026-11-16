@@ -256,6 +256,7 @@ def bundle_datas() -> list[tuple[str, str]]:
     entries = []
     for tree in DATA_TREES:
         entries += _tree(ROOT / tree, tree)
+    ensure_lexis_datas(entries)
     if _unifiedlog_binary() is not None:
         for name, remedy in (
                 (UNIFIEDLOG_LICENSE, "Re-run admin/scripts/fetch_unifiedlog_iterator.py."),
@@ -279,13 +280,72 @@ def artifact_modules() -> list[str]:
     cannot be named this way; it still ships as source and loads, but what it imports has
     to be bundled because something else imports it too.
     """
-    stems = sorted(p.stem for p in (ROOT / "scripts" / "artifacts").glob("*.py"))
-    return [f"scripts.artifacts.{stem}" for stem in stems
-            if stem.isidentifier() and stem != "__init__"]
+    modules = []
+    for folder, prefix in (
+        (ROOT / "scripts" / "artifacts", "scripts.artifacts"),
+        (ROOT / "scripts" / "lexis_artifacts", "scripts.lexis_artifacts"),
+    ):
+        if not folder.is_dir():
+            continue
+        stems = sorted(p.stem for p in folder.glob("*.py"))
+        modules.extend(f"{prefix}.{stem}" for stem in stems
+                       if stem.isidentifier() and stem != "__init__")
+    return modules
 
 
 def hidden_imports() -> list[str]:
     return list(FIXED_HIDDEN_IMPORTS) + artifact_modules()
+
+
+def lexis_artifact_stems() -> list[str]:
+    """The LEXIS plugin modules PluginLoader must register (LEXIS_*.py under scripts/lexis_artifacts)."""
+    folder = ROOT / "scripts" / "lexis_artifacts"
+    return sorted(p.stem for p in folder.glob("LEXIS_*.py") if p.stem.isidentifier())
+
+
+def ensure_lexis_datas(entries: list[tuple[str, str]]) -> None:
+    """Fail the build if scripts/lexis_artifacts would be missing from the bundle.
+
+    PluginLoader looks for LEXISPATH as a directory beside scripts/artifacts; the folder
+    is walked with the scripts/ data tree, but a missing or empty copy must not ship.
+    """
+    folder = ROOT / "scripts" / "lexis_artifacts"
+    if not folder.is_dir() or not any(folder.glob("*.py")):
+        sys.exit("build: scripts/lexis_artifacts is missing or empty; "
+                 "LEXISPATH.is_dir() would be false in a frozen build")
+    present = any("lexis_artifacts" in Path(dest).as_posix().split("/")
+                  for _src, dest in entries)
+    if not present:
+        sys.exit("build: scripts/lexis_artifacts was not added to the PyInstaller datas; "
+                 "LEXIS modules would not load when frozen")
+
+
+def assert_lexis_plugins() -> list[str]:
+    """Fail the build if PluginLoader() does not register the LEXIS modules (by module name)."""
+    stems = [s for s in lexis_artifact_stems() if s.startswith("LEXIS_")]  # Windows globs ignore case
+    if not stems:
+        sys.exit("build: no LEXIS_*.py modules in scripts/lexis_artifacts")
+    code = (
+        "from scripts.plugin_loader import PluginLoader\n"
+        "print('\\n'.join(sorted({p.module_name for p in PluginLoader().plugins})))"
+    )
+    result = subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True,
+                            text=True, check=False)
+    if result.returncode != 0:
+        sys.exit("build: could not load the artifacts from source:\n"
+                 + ((result.stderr or result.stdout)[-2000:]))
+    names = {line.strip() for line in result.stdout.splitlines() if line.strip()}
+    missing = [s for s in stems if s not in names]
+    if missing:
+        detail = f"\n{result.stderr[-2000:]}" if result.stderr else ""
+        sys.exit("build: LEXIS modules missing from PluginLoader(): "
+                 + ", ".join(missing) + detail)
+    found = [s for s in sorted(names) if s.startswith("LEXIS_") or s.startswith("lexis_")]
+    print(f"==> PluginLoader registered {len(found)} LEXIS modules: {', '.join(found)}",
+          flush=True)
+    return found
+
+
 
 
 # -- phase 1 -----------------------------------------------------------------------------
@@ -327,6 +387,7 @@ def build_exe(onefile: bool, clean_first: bool) -> Path:
     refuse_collision(onefile)
     run([sys.executable, "-m", "pip", "install", "-q", "--disable-pip-version-check",
          "-r", str(ROOT / "requirements.txt"), "-r", str(BUILD_REQUIREMENTS)])
+    assert_lexis_plugins()
     env = dict(os.environ, ILEAPP_ONEFILE="1" if onefile else "0")
     run([sys.executable, "-m", "PyInstaller", str(SPEC), "--noconfirm",
          "--distpath", str(DIST), "--workpath", str(BUILD)], env=env)

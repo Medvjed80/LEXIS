@@ -15,6 +15,7 @@
     <local:ToArrayConverter x:Key="ToArray"/>
     <local:TranslationConverter x:Key="Tr"/>
     <local:MediaNoteConverter x:Key="MediaNote"/>
+    <local:FileNoteConverter x:Key="FileNote"/>
     <local:TagColorConverter x:Key="TagColor"/>
     <local:TagOfConverter x:Key="TagOf"/>
     <local:EqualsConverter x:Key="IsApps" Value="Apps"/>
@@ -1223,6 +1224,24 @@
             </Grid>
             <TextBlock Text="{Binding Media.Name}" TextTrimming="CharacterEllipsis" Margin="0,3,0,0"/>
             <TextBlock Text="{Binding Caption}" TextTrimming="CharacterEllipsis" FontSize="11" Foreground="{StaticResource MutedBrush}"/>
+            <!-- the player exists only for audio, so a page of pictures does not build one per tile -->
+            <ContentControl Content="{Binding}" Focusable="False" Margin="0,2,0,0">
+                <ContentControl.Style>
+                    <Style TargetType="ContentControl">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding Media.Kind}" Value="audio">
+                                <Setter Property="ContentTemplate">
+                                    <Setter.Value>
+                                        <DataTemplate>
+                                            <views:PlayerView Media="{Binding Media}" AudioOnly="True" Compact="True"/>
+                                        </DataTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </ContentControl.Style>
+            </ContentControl>
         </StackPanel>
     </DataTemplate>
 
@@ -1233,7 +1252,7 @@
                 <local:HeaderPanel>
                     <WrapPanel Orientation="Horizontal" DockPanel.Dock="Right">
                         <TextBlock Text="{Binding CheckedText}" VerticalAlignment="Center" Margin="0,0,6,0" FontWeight="SemiBold"
-                                   ToolTip="The AI buttons act on the checked files the filters keep. Space checks or unchecks the selected tiles."/>
+                                   ToolTip="Describe uses the checked files. Transcribe selected audio uses the tiles selected in the gallery; Transcribe uses that selection, or the checked files when nothing is selected. Space checks or unchecks the selected tiles."/>
                         <Button Style="{StaticResource FlatButton}" Command="{Binding CheckAllCommand}" ToolTip="Check every file">
                             <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Icon}" Text="&#xE73A;"/><TextBlock Text=" Check all"/></StackPanel>
                         </Button>
@@ -1244,13 +1263,34 @@
                                 ToolTip="AI on the checked images: what each shows, and its text read (OCR) and translated">
                             <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Icon}" Text="&#xE8B9;"/><TextBlock Text=" Describe + OCR"/></StackPanel>
                         </Button>
+                        <Button Style="{StaticResource FlatButton}" Command="{Binding TranscribeSelectedCommand}" IsEnabled="{Binding Audio, Source={x:Static local:AiState.Instance}}" ToolTipService.ShowOnDisabled="True"
+                                ToolTip="Transcribe the audio files selected in the gallery (click, Ctrl+click, Shift+click). Each transcript is saved in that file's note.">
+                            <Button.CommandParameter>
+                                <Binding ElementName="GalleryList" Path="SelectedItems"/>
+                            </Button.CommandParameter>
+                            <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Icon}" Text="&#xE720;"/><TextBlock Text=" Transcribe selected audio"/></StackPanel>
+                        </Button>
+                        <Button Style="{StaticResource FlatButton}" Command="{Binding TranscribeAllCommand}" IsEnabled="{Binding Audio, Source={x:Static local:AiState.Instance}}" ToolTipService.ShowOnDisabled="True"
+                                ToolTip="Transcribe every audio file the filters keep, whether or not it is checked. Each transcript is saved in that file's note.">
+                            <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Icon}" Text="&#xE720;"/><TextBlock Text=" Transcribe all audio"/></StackPanel>
+                        </Button>
                         <Button Style="{StaticResource FlatButton}" Command="{Binding TranscribeCommand}" IsEnabled="{Binding Audio, Source={x:Static local:AiState.Instance}}" ToolTipService.ShowOnDisabled="True"
-                                ToolTip="AI on the checked audio files (else every audio file the filters keep): speech to text">
+                                ToolTip="Selected audio files when some tiles are selected; otherwise the checked audio files. Each transcript is saved in that file's note.">
+                            <Button.CommandParameter>
+                                <Binding ElementName="GalleryList" Path="SelectedItems"/>
+                            </Button.CommandParameter>
                             <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Icon}" Text="&#xE720;"/><TextBlock Text=" Transcribe"/></StackPanel>
                         </Button>
-                        <Button Style="{StaticResource FlatButton}" Command="{Binding AiCommand}" IsEnabled="{Binding Enabled, Source={x:Static local:AiState.Instance}}" ToolTipService.ShowOnDisabled="True" Margin="0,0,10,0"
+                        <Button Style="{StaticResource FlatButton}" Command="{Binding AiCommand}" IsEnabled="{Binding Enabled, Source={x:Static local:AiState.Instance}}" ToolTipService.ShowOnDisabled="True"
                                 ToolTip="AI on the checked files, else every file the filters keep: image classification, description and OCR, audio transcription">
                             <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Icon}" Text="&#xE945;"/><TextBlock Text=" AI"/></StackPanel>
+                        </Button>
+                        <Button Style="{StaticResource FlatButton}" Command="{Binding AnalyzeSelectionCommand}" IsEnabled="{Binding Enabled, Source={x:Static local:AiState.Instance}}" ToolTipService.ShowOnDisabled="True" Margin="0,0,10,0"
+                                ToolTip="AI on the files selected in the gallery (click, Ctrl+click, Shift+click), not on every file left checked">
+                            <Button.CommandParameter>
+                                <Binding ElementName="GalleryList" Path="SelectedItems"/>
+                            </Button.CommandParameter>
+                            <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Icon}" Text="&#xE945;"/><TextBlock Text=" AI on selection"/></StackPanel>
                         </Button>
                         <Button Style="{StaticResource FlatButton}" Command="{Binding PrevPageCommand}"><TextBlock Style="{StaticResource Icon}" Text="&#xE76B;" FontSize="11"/></Button>
                         <TextBlock Text="{Binding PageText}" VerticalAlignment="Center" Margin="6,0" MinWidth="120" TextAlignment="Center"/>
@@ -1311,7 +1351,7 @@
             <TextBlock DockPanel.Dock="Top" Text="{Binding About}" Margin="10,6,10,0" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
             <TextBlock DockPanel.Dock="Top" Text="{Binding Status}" Margin="10,6" Foreground="{StaticResource MutedBrush}"
                        Visibility="{Binding Status, Converter={StaticResource Vis}}"/>
-            <ListBox ItemsSource="{Binding Items}" SelectedItem="{Binding Selected}" BorderThickness="0" SelectionMode="Extended" local:RecordGrid.Enabled="True"
+            <ListBox x:Name="GalleryList" ItemsSource="{Binding Items}" SelectedItem="{Binding Selected}" BorderThickness="0" SelectionMode="Extended" local:RecordGrid.Enabled="True"
                      ScrollViewer.HorizontalScrollBarVisibility="Disabled" VirtualizingPanel.IsVirtualizing="True" ItemTemplate="{StaticResource MediaTile}">
                 <ListBox.ItemsPanel><ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate></ListBox.ItemsPanel>
             </ListBox>
@@ -1323,14 +1363,50 @@
         <DockPanel>
             <Border Style="{StaticResource ViewHeader}"><ScrollViewer Style="{StaticResource HeaderScroll}">
                 <DockPanel>
-                    <Button DockPanel.Dock="Right" Style="{StaticResource FlatButton}" Content="Export report (HTML/JSON)" Command="{Binding ExportHtmlCommand}"/>
+                    <WrapPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Button Style="{StaticResource FlatButton}" Content="Open in original folder" Command="{Binding OpenInFolderCommand}" CommandParameter="{Binding Selected}"
+                                ToolTip="Opens Extraction Files on the file's parent folder, with the file selected (or double-click a tagged file)"/>
+                        <Button Style="{StaticResource FlatButton}" Content="Open file" Command="{Binding OpenFileCommand}" CommandParameter="{Binding Selected}"
+                                ToolTip="Opens the tagged file in the built-in viewer, or with its program when it has no in-app preview"/>
+                        <Button Style="{StaticResource FlatButton}" Content="Show in Explorer" Command="{Binding ShowInExplorerCommand}" CommandParameter="{Binding Selected}"
+                                ToolTip="Shows a local copy of the file in Windows Explorer, when one already exists"/>
+                        <Button Style="{StaticResource FlatButton}" Content="Remove tag" Command="{Binding RemoveTagCommand}" CommandParameter="{Binding SelectedItems, ElementName=TaggedList}"
+                                ToolTip="Removes the tag from the selected items (several can be selected)"/>
+                        <Button Style="{StaticResource FlatButton}" Content="Export report (HTML/JSON)" Command="{Binding ExportHtmlCommand}"/>
+                    </WrapPanel>
                     <TextBlock Style="{StaticResource ViewTitle}" Text="Tagged Items"/>
                 </DockPanel>
             </ScrollViewer></Border>
-            <DataGrid ItemsSource="{Binding Items}" SelectedItem="{Binding Selected}" SelectionMode="Single" BorderThickness="0">
+            <DataGrid x:Name="TaggedList" ItemsSource="{Binding Items}" SelectedItem="{Binding Selected}" SelectionMode="Extended" BorderThickness="0">
                 <DataGrid.InputBindings>
                     <MouseBinding Gesture="LeftDoubleClick" Command="{Binding GoToCommand}"/>
                 </DataGrid.InputBindings>
+                <DataGrid.ContextMenu>
+                    <ContextMenu>
+                        <MenuItem Header="Open in original folder"
+                                  Command="{Binding PlacementTarget.DataContext.OpenInFolderCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                  CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                        <MenuItem Header="Open file"
+                                  Command="{Binding PlacementTarget.DataContext.OpenFileCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                  CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                        <MenuItem Header="Show in Explorer"
+                                  Command="{Binding PlacementTarget.DataContext.ShowInExplorerCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                  CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                        <Separator/>
+                        <MenuItem Header="Change tag" ItemsSource="{Binding PlacementTarget.DataContext.TagChoices, RelativeSource={RelativeSource AncestorType=ContextMenu}}">
+                            <MenuItem.ItemContainerStyle>
+                                <Style TargetType="MenuItem">
+                                    <Setter Property="Header" Value="{Binding}"/>
+                                    <Setter Property="Command" Value="{Binding PlacementTarget.DataContext.SetFileTagCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                                    <Setter Property="CommandParameter" Value="{Binding}"/>
+                                </Style>
+                            </MenuItem.ItemContainerStyle>
+                        </MenuItem>
+                        <MenuItem Header="Remove tag"
+                                  Command="{Binding PlacementTarget.DataContext.RemoveTagCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                  CommandParameter="{Binding PlacementTarget.SelectedItems, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                    </ContextMenu>
+                </DataGrid.ContextMenu>
                 <DataGrid.Columns>
                     <DataGridTemplateColumn Header="Tag" Width="130" SortMemberPath="Entry.Tag" ClipboardContentBinding="{Binding Entry.Tag}">
                         <DataGridTemplateColumn.CellTemplate><DataTemplate>
@@ -1394,6 +1470,7 @@
     <!-- Extraction Files: the selected file in hex, as text (JSON, XML indented) and as a tree; what it was recognised as above -->
     <DataTemplate x:Key="FileViewer">
         <DockPanel Background="White">
+            <views:PlayerView DockPanel.Dock="Top" Media="{Binding PreviewMedia}" AudioOnly="True" Margin="8,4,8,0"/>
             <TextBlock DockPanel.Dock="Top" Text="{Binding Detected}" TextWrapping="Wrap" Margin="6,4" Foreground="{StaticResource MutedBrush}"
                        Visibility="{Binding Detected, Converter={StaticResource Vis}}"/>
         <TabControl BorderThickness="0" SelectedIndex="{Binding ViewerTab}">
@@ -1489,6 +1566,17 @@
                             <Button Style="{StaticResource FlatButton}" Content="Explore archive" Command="{Binding ExploreArchiveCommand}" Visibility="{Binding AnyKind, Converter={StaticResource Vis}}"
                                     ToolTip="Browse the files inside the selected zip (also APK, JAR, Office), tar, tar.gz or gz, in place: nothing is unpacked (or double-click it)"/>
                             <Button Style="{StaticResource FlatButton}" Content="Show in its folder" Command="{Binding ShowFolderCommand}"/>
+                            <Button Style="{StaticResource FlatButton}" Content="AI on selection" Command="{Binding AnalyzeSelectionCommand}"
+                                    IsEnabled="{Binding Enabled, Source={x:Static local:AiState.Instance}}" ToolTipService.ShowOnDisabled="True"
+                                    ToolTip="AI on the files selected in the list (Ctrl+click or Shift+click), not on every file shown">
+                                <Button.CommandParameter>
+                                    <MultiBinding Converter="{StaticResource ToArray}">
+                                        <Binding Path="Thumbnails"/>
+                                        <Binding ElementName="FileGrid" Path="SelectedItems"/>
+                                        <Binding ElementName="FileTiles" Path="SelectedItems"/>
+                                    </MultiBinding>
+                                </Button.CommandParameter>
+                            </Button>
                         </WrapPanel>
                     </Grid>
                     <StackPanel Orientation="Horizontal" Margin="0,4,0,0" Visibility="{Binding Unreachable, Converter={StaticResource Vis}}">
@@ -1578,7 +1666,7 @@
                         <Button Style="{StaticResource FlatButton}" Content="Next ›" Command="{Binding NextPageCommand}"/>
                     </StackPanel>
                     <Grid>
-                    <DataGrid ItemsSource="{Binding Rows}" Visibility="{Binding Thumbnails, Converter={StaticResource Vis}, ConverterParameter=invert}" SelectedItem="{Binding Selected}" SelectionMode="Single" BorderThickness="0"
+                    <DataGrid x:Name="FileGrid" ItemsSource="{Binding Rows}" Visibility="{Binding Thumbnails, Converter={StaticResource Vis}, ConverterParameter=invert}" SelectedItem="{Binding Selected}" SelectionMode="Extended" BorderThickness="0"
                               EnableRowVirtualization="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
                         <DataGrid.InputBindings><MouseBinding Gesture="LeftDoubleClick" Command="{Binding OpenCommand}"/></DataGrid.InputBindings>
                         <DataGrid.ContextMenu><ContextMenu ItemsSource="{Binding FileActions}" ItemContainerStyle="{StaticResource FileActionItem}"/></DataGrid.ContextMenu>
@@ -1602,7 +1690,7 @@
                             <DataGridTextColumn Header="Hits" Binding="{Binding Hits}" Width="50"/>
                         </DataGrid.Columns>
                     </DataGrid>
-                    <ListBox ItemsSource="{Binding Tiles}" SelectedValuePath="Row" SelectedValue="{Binding Selected}" BorderThickness="0"
+                    <ListBox x:Name="FileTiles" ItemsSource="{Binding Tiles}" SelectedValuePath="Row" SelectedValue="{Binding Selected}" SelectionMode="Extended" BorderThickness="0"
                              ScrollViewer.HorizontalScrollBarVisibility="Disabled" Visibility="{Binding Thumbnails, Converter={StaticResource Vis}}"
                              AutomationProperties.Name="Thumbnails">
                         <ListBox.InputBindings><MouseBinding Gesture="LeftDoubleClick" Command="{Binding OpenCommand}"/></ListBox.InputBindings>
@@ -1850,6 +1938,24 @@
             <Border Style="{StaticResource ViewHeader}"><ScrollViewer Style="{StaticResource HeaderScroll}">
                 <DockPanel>
                     <WrapPanel Orientation="Horizontal" DockPanel.Dock="Right" VerticalAlignment="Center">
+                        <Button Style="{StaticResource FlatButton}" Command="{Binding AnalyzeSelectionCommand}" IsEnabled="{Binding Enabled, Source={x:Static local:AiState.Instance}}" ToolTipService.ShowOnDisabled="True"
+                                ToolTip="AI on the selected chats only: their messages and attachments. Ctrl+click or Shift+click to select more than one">
+                            <Button.CommandParameter>
+                                <Binding ElementName="ChatList" Path="SelectedItems"/>
+                            </Button.CommandParameter>
+                            <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Icon}" Text="&#xE945;"/><TextBlock Text=" AI on selection"/></StackPanel>
+                        </Button>
+                        <Button Style="{StaticResource FlatButton}" Command="{Binding TranscribeSelectionCommand}" IsEnabled="{Binding Audio, Source={x:Static local:AiState.Instance}}" ToolTipService.ShowOnDisabled="True"
+                                ToolTip="Transcribe the voice and audio messages of the selected chats only. Each transcript is saved in that audio file's note.">
+                            <Button.CommandParameter>
+                                <Binding ElementName="ChatList" Path="SelectedItems"/>
+                            </Button.CommandParameter>
+                            <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Icon}" Text="&#xE720;"/><TextBlock Text=" Transcribe selected audio"/></StackPanel>
+                        </Button>
+                        <Button Style="{StaticResource FlatButton}" Command="{Binding TranscribeAllCommand}" IsEnabled="{Binding Audio, Source={x:Static local:AiState.Instance}}" ToolTipService.ShowOnDisabled="True"
+                                ToolTip="Transcribe the voice and audio messages of every chat in this list. Each transcript is saved in that audio file's note.">
+                            <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Icon}" Text="&#xE720;"/><TextBlock Text=" Transcribe all audio"/></StackPanel>
+                        </Button>
                         <Button Style="{StaticResource FlatButton}" Command="{Binding OpenChatCommand}" ToolTip="Open the selected chat in its own tab (or double-click it)">
                             <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Icon}" Text="&#xE8BD;"/><TextBlock Text=" Open chat"/></StackPanel>
                         </Button>
@@ -1877,8 +1983,8 @@
                     </StackPanel>
                 </DockPanel>
             </ScrollViewer></Border>
-            <DataGrid ItemsSource="{Binding Conversations}" SelectedItem="{Binding Selected}" SelectionMode="Extended" BorderThickness="0" local:RecordGrid.Enabled="True"
-                      ToolTip="Double-click: open the chat. Right-click: tags (every message of the selected chats), AI, export"
+            <DataGrid x:Name="ChatList" ItemsSource="{Binding Conversations}" SelectedItem="{Binding Selected}" SelectionMode="Extended" BorderThickness="0" local:RecordGrid.Enabled="True"
+                      ToolTip="Double-click: open the chat. Ctrl+click or Shift+click: several chats. Right-click: tags, AI on the selection, export. Transcribe selected audio uses the selected chats; Transcribe all audio uses every chat in this list."
                       VirtualizingPanel.IsVirtualizing="True" local:DynamicColumns.HeaderMenus="{Binding ListColumns}">
                 <DataGrid.Resources><local:BindingProxy x:Key="Ctx" Data="{Binding}"/></DataGrid.Resources>
                 <DataGrid.InputBindings>
@@ -2064,6 +2170,22 @@
                                                                 <TextBlock Visibility="{Binding IsImage, Converter={StaticResource Vis}, ConverterParameter=invert}">
                                                                     <Run Text="&#xE723;" FontFamily="{StaticResource IconFont}"/> <Run Text="{Binding Name, Mode=OneWay}"/></TextBlock>
                                                                 <views:PlayerView Media="{Binding}" AudioOnly="True" MinWidth="260"/>
+                                                                <Border Background="#14000000" CornerRadius="3" Padding="4,2" Margin="0,3,0,0" ToolTip="Note stored on this file">
+                                                                    <Border.Visibility>
+                                                                        <MultiBinding Converter="{StaticResource FileNote}" ConverterParameter="visibility">
+                                                                            <Binding/>
+                                                                            <Binding Path="DataContext.FileNotes" RelativeSource="{RelativeSource AncestorType=ListBox}"/>
+                                                                        </MultiBinding>
+                                                                    </Border.Visibility>
+                                                                    <TextBlock TextWrapping="Wrap">
+                                                                        <TextBlock.Text>
+                                                                            <MultiBinding Converter="{StaticResource FileNote}" Mode="OneWay">
+                                                                                <Binding/>
+                                                                                <Binding Path="DataContext.FileNotes" RelativeSource="{RelativeSource AncestorType=ListBox}"/>
+                                                                            </MultiBinding>
+                                                                        </TextBlock.Text>
+                                                                    </TextBlock>
+                                                                </Border>
                                                                 <TextBlock TextWrapping="Wrap" FontStyle="Italic" Foreground="{StaticResource AiBrush}" Background="#F4EFFA" Padding="4,2" Margin="0,3,0,0"
                                                                            ToolTip="AI · review aid, not a finding: check it against the file">
                                                                     <TextBlock.Visibility>

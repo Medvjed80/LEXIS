@@ -411,6 +411,7 @@ public partial class MainViewModel : ObservableObject
             target.Devices.AddRange(opened);
             Devices.AddRange(opened);
             foreach (var d in opened) foreach (var a in d.Session.Manifest.Artifacts) _owner[a] = d.Session;
+            var sessions = opened.Select(d => d.Session).ToList();
             var first = opened.FirstOrDefault();
             opened.Clear(); // the case owns them now
             Session = first?.Session ?? Devices.FirstOrDefault()?.Session; // a case may have no device yet
@@ -423,6 +424,7 @@ public partial class MainViewModel : ObservableObject
             var arts = (inv is null ? [first!] : target.Devices).SelectMany(d => d.Session.Manifest.Artifacts).ToList();
             Status = (inv is not null ? $"{target.Title}: {target.Devices.Count} device{(target.Devices.Count == 1 ? "" : "s")} · " : "") +
                      $"{arts.Count} artifacts in {arts.Select(a => a.Category).Distinct().Count()} categories · {arts.Sum(a => a.RecordCount):N0} records";
+            _ = NotesThenTranscribe(sessions); // after this method returns and the case UI has loaded
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException or System.Text.Json.JsonException
                                       or Microsoft.Data.Sqlite.SqliteException)
@@ -674,12 +676,121 @@ public partial class MainViewModel : ObservableObject
         return vm;
     }
 
-    /// <summary>After an AI job: the open tables and chats show the new translations and file notes, the details theirs.</summary>
-    public void RefreshAiViews()
+    AiViewModel? _autoTranscribe;
+    [ObservableProperty] private bool autoTranscribing;
+
+    /// <summary>Copies saved transcripts, then starts automatic transcription. Both wait until the dispatcher is idle
+    /// so opening the case paints first, and every database read runs off the UI thread.</summary>
+    async Task NotesThenTranscribe(IReadOnlyList<CaseSession> sessions)
     {
+        try { await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.ApplicationIdle); }
+        catch (InvalidOperationException) { return; }
+        var copied = 0;
+        try
+        {
+            copied = await Task.Run(() =>
+            {
+                var n = 0;
+                foreach (var s in sessions)
+                    try { n += TranscriptNotes.Apply(s); }
+                    catch (Exception e) when (e is Microsoft.Data.Sqlite.SqliteException or IOException) { }
+                return n;
+            });
+        }
+        catch (Exception e) when (e is Microsoft.Data.Sqlite.SqliteException or IOException) { }
+        if (copied > 0)
+        {
+            Status += $" · {copied:N0} transcripts saved in file notes";
+            RefreshWrittenNotes();
+        }
+        await AutoTranscribe(sessions);
+    }
+
+    /// <summary>whisper.cpp only, and only when the setting is on: audio with no transcript yet, with progress in the
+    /// status bar. A cloud transcription engine is never started from here. Files already transcribed are left out
+    /// by one query of the done keys, not one check per file.</summary>
+    async Task AutoTranscribe(IReadOnlyList<CaseSession> sessions)
+    {
+        try
+        {
+            var ai = Settings.Current.Ai;
+            if (!ai.AutoTranscribeNotes || ai.Transcription.Provider != AiSettings.WhisperName || !ai.Ready(ai.Transcription)
+                || !File.Exists(ai.WhisperPath) || _autoTranscribe is not null) return;
+            var prefix = $"transcribe|{ai.Transcription.Provider}|{ai.Transcription.Model}|";
+            foreach (var s in sessions)
+            {
+                List<MediaRef> audio;
+                try
+                {
+                    audio = await Task.Run(() =>
+                    {
+                        List<MediaRef> all;
+                        using (var con = s.OpenDb())
+                            all = new MediaResolver(s).All(con, int.MaxValue).Where(m => m.Kind == "audio" && m.Exists).DistinctBy(m => m.RefId).ToList();
+                        var done = AiStore.For(s).DoneKeys();
+                        return all.Where(m => !done.Contains(prefix + m.RefId)).ToList();
+                    });
+                }
+                catch (Exception e) when (e is Microsoft.Data.Sqlite.SqliteException or IOException) { continue; }
+                if (audio.Count == 0) continue;
+                var vm = new AiViewModel(this, s, new AiScope($"automatic transcription · {audio.Count:N0} audio files", [], audio));
+                _autoTranscribe = vm;
+                AutoTranscribing = true;
+                vm.PropertyChanged += (_, e) =>
+                {
+                    if (e.PropertyName == nameof(AiViewModel.Status) && vm.Status != "") Status = "Transcribing audio · " + vm.Status + "  (Cancel transcription in the status bar)";
+                };
+                try { await vm.TranscribeCommand.ExecuteAsync(null); }
+                finally
+                {
+                    if (_autoTranscribe == vm) { _autoTranscribe = null; AutoTranscribing = false; }
+                }
+                if (vm.Status.StartsWith("Stopped", StringComparison.Ordinal) || vm.Status.StartsWith("Failed", StringComparison.Ordinal)) break;
+            }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or Microsoft.Data.Sqlite.SqliteException or AiException or InvalidOperationException)
+        {
+            Status = "Automatic transcription stopped: " + e.Message;
+            _autoTranscribe = null;
+            AutoTranscribing = false;
+        }
+    }
+
+    [RelayCommand]
+    void CancelAutoTranscribe() => _autoTranscribe?.CancelCommand.Execute(null);
+
+    /// <summary>After an AI job: saved transcripts are copied into the files' notes off the UI thread, then the open
+    /// tables and chats show them once.</summary>
+    public void RefreshAiViews() => _ = RefreshAiViewsAsync();
+
+    async Task RefreshAiViewsAsync()
+    {
+        var sessions = Devices.Select(d => d.Session).Distinct().ToList();
+        try
+        {
+            await Task.Run(() =>
+            {
+                foreach (var s in sessions)
+                    try { TranscriptNotes.Apply(s); }
+                    catch (Exception e) when (e is Microsoft.Data.Sqlite.SqliteException or IOException) { }
+            });
+        }
+        catch (Exception e) when (e is Microsoft.Data.Sqlite.SqliteException or IOException) { }
         foreach (var t in Tabs)
             _ = (t.Content switch { ArtifactViewModel a => a.Translation, ChatViewModel c => c.Translation, _ => null })?.LoadAsync();
+        RefreshWrittenNotes();
+    }
+
+    /// <summary>The details pane, the open chats and Tagged items re-read file notes. Called as soon as a transcript is written.</summary>
+    public void RefreshWrittenNotes()
+    {
+        foreach (var t in Tabs)
+        {
+            if (t.Content is ChatViewModel chat) chat.RefreshFileNotes();
+            if (t.Content is TaggedViewModel tagged) tagged.Refresh();
+        }
         Details.RefreshAi();
+        RefreshTagCount();
     }
 
     bool AiOn()
@@ -1032,6 +1143,18 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
+    /// <summary>Called after a file tag or note changes, so Tagged Items, Extraction Files and the details stay in step.</summary>
+    public void OnFileTagChanged(CaseSession? s = null)
+    {
+        RefreshTagCount();
+        Details.SyncFileTag(s ?? Session);
+        foreach (var t in Tabs)
+        {
+            if (t.Content is TaggedViewModel tv) tv.Refresh();
+            if (t.Content is FilesViewModel fv && (s is null || fv.IsSession(s))) fv.RefreshTags();
+        }
+    }
+
     public void NavigateTo(ArtifactInfo artifact, string? filter = null, long? selectRowId = null)
     {
         if (SessionOf(artifact) is not { } s) return;
@@ -1156,6 +1279,7 @@ public partial class MainViewModel : ObservableObject
         if (vm.ResultManifest is not { } report) return;
         await OpenCaseAsync(report);
         if (Devices.FirstOrDefault(d => d.Path != "" && SamePath(d.Path, report)) is not { } device) return;
+        if (vm.EvidenceZip is { } zip) device.Session.LocateExtraction(zip);
         if (vm.TargetCase is { IsNew: true })
         {
             var cvm = new InvestigationCaseViewModel(new LexisCase("", vm.CaseNumber.Trim(), [new LexisDevice(device.Path, device.Label, device.Color)]), null);

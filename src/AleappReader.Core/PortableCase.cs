@@ -12,15 +12,19 @@ namespace AleappReader.Core;
 public enum FileSystemScope { None, Sources, AllRead }
 
 /// <summary>What goes into a portable case: the artifacts (null = every one), only their tagged records, the media
-/// files, the extraction's own files.</summary>
+/// files, the extraction's own files, and whether audio transcripts travel with them.</summary>
 /// <param name="TaggedFiles">Also the files tagged in Extraction Files or the gallery (a file inside an archive brings
 /// the archive), whatever <paramref name="FileSystem"/> says.</param>
+/// <param name="Transcripts">When true, the package carries automatic transcripts of the exported audio only.
+/// Off by default: no transcript text is copied into the tags or the AI base.</param>
 public sealed record PortableSelection(IReadOnlySet<string>? Tables = null, bool TaggedOnly = false, bool Media = true,
-                                       FileSystemScope FileSystem = FileSystemScope.None, bool TaggedFiles = false)
+                                       FileSystemScope FileSystem = FileSystemScope.None, bool TaggedFiles = false,
+                                       bool Transcripts = false)
 {
     public string Describe() =>
         (Tables is null ? "all artifacts" : $"{Tables.Count} selected artifacts") + (TaggedOnly ? ", tagged records only" : "") +
         (Media ? "" : ", without media files") +
+        (Transcripts ? ", with audio transcripts" : ", without audio transcripts") +
         FileSystem switch
         {
             FileSystemScope.Sources => ", with the artifacts' source files from the extraction",
@@ -98,9 +102,7 @@ public static partial class PortableCase
             : [];
         // tagged files: a file inside an archive brings the archive, which the recipient explores in turn; a tag on a
         // report's own media file (no path in the extraction) adds nothing, the media are carried with the case
-        var tagged = sel.TaggedFiles
-            ? s.Tags.FileTags().Keys.Select(k => k.IndexOf(ExtractionFiles.Inside, StringComparison.Ordinal) is var cut and > 0 ? k[..cut] : k).ToHashSet(StringComparer.Ordinal)
-            : [];
+        var tagged = sel.TaggedFiles ? TaggedSourcePaths(s).ToHashSet(StringComparer.Ordinal) : [];
         var list = new List<PortableFile>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var source in wanted.Concat(tagged).Where(p => p != "" && !p.Split('/').Contains("..") && !p.Contains(':')))
@@ -110,9 +112,24 @@ public static partial class PortableCase
                 if (!seen.Add(rel)) continue;
                 if (x?.SizeOf(rel) is long size and >= 0) list.Add(new(rel, size, true));
                 else if (s.ResolveInCase(Path.Combine("data", rel)) is { } c && File.Exists(c)) list.Add(new(rel, new FileInfo(c).Length, false));
-                else if (rel == source && !tagged.Contains(source)) list.Add(new(rel, -1, false));
+                else if (rel == source) list.Add(new(rel, -1, false));
             }
         return list;
+    }
+
+    /// <summary>Tagged extraction paths a portable case should carry (an archive member becomes its archive).</summary>
+    public static IReadOnlyList<string> TaggedSourcePaths(CaseSession s) =>
+        s.Tags.FileTags().Keys
+            .Select(k => k.IndexOf(ExtractionFiles.Inside, StringComparison.Ordinal) is var cut and > 0 ? k[..cut] : k)
+            .Where(p => p != "" && !p.Split('/').Contains("..") && !p.Contains(':'))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+    /// <summary>Tagged files that are in neither the extraction nor ALEAPP's copies, so they cannot go into the package.</summary>
+    public static IReadOnlyList<string> MissingTaggedFiles(CaseSession s, IReadOnlyList<PortableFile> fs)
+    {
+        var have = fs.Where(f => f.Size >= 0).Select(f => f.Rel).ToHashSet(StringComparer.Ordinal);
+        return TaggedSourcePaths(s).Where(k => !have.Contains(k)).ToList();
     }
 
     /// <param name="reader">The reader to put beside the zip: a single-file exe, or a build folder (copied to Reader\ with
@@ -126,7 +143,10 @@ public static partial class PortableCase
         {
             Directory.CreateDirectory(staging);
             var (caseFiles, counts) = sel.Tables is null && !sel.TaggedOnly ? (CaseFilesAll(s, sel.Media, staging), null) : Stage(s, staging, sel, log);
+            PrepareExaminerData(s, staging, sel, caseFiles, log);
             var fs = FileSystemFiles(s, sel, ct);
+            if (sel.TaggedFiles && MissingTaggedFiles(s, fs) is { Count: > 0 } missing)
+                throw new IOException($"{missing.Count} tagged file(s) cannot be read from the extraction or ALEAPP's copies, the portable case was not written: {EvidenceOrigin.Join(missing.Select(EvidenceOrigin.DevicePath).ToList())}");
             caseFiles.Insert(0, (WriteManifest(s, staging, counts, sel.Describe(), sel.FileSystemContent(), fs), Path.GetFileName(s.ManifestPath)));
             // written aside and moved in place when complete, so a cancelled or failed build leaves no half-written zip
             var part = zipPath + ".part";
@@ -233,6 +253,11 @@ public static partial class PortableCase
         using var src = s.OpenDb();
         using var dst = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = dbPath, Pooling = false }.ToString());
         dst.Open();
+        // Microsoft.Data.Sqlite turns foreign keys on at Open(). Stage copies artifact rows before
+        // _lava_media_references / _lava_media_items, and may omit a referenced media row (media
+        // left out, or a reference with no source row), so enforcement would fail. PRAGMA foreign_keys
+        // is ignored inside a transaction and must run first. The copied CREATE TABLE sql is unchanged.
+        Exec(dst, "PRAGMA foreign_keys=OFF");
         using var tx = dst.BeginTransaction();
         foreach (var art in arts)
         {
@@ -295,14 +320,211 @@ public static partial class PortableCase
                 tagDst.Open();
                 tagSrc.BackupDatabase(tagDst);
                 using var cmd = tagDst.CreateCommand();
-                cmd.CommandText = "DELETE FROM tags WHERE table_name NOT IN (SELECT value FROM json_each($t)) AND NOT ($f AND substr(table_name, 1, 5) = 'file:')";
-                cmd.Parameters.AddWithValue("$f", sel.TaggedFiles);
+                cmd.CommandText = "DELETE FROM tags WHERE table_name NOT IN (SELECT value FROM json_each($t)) AND substr(table_name, 1, 5) != 'file:'";
                 cmd.Parameters.AddWithValue("$t", System.Text.Json.JsonSerializer.Serialize(arts.Select(a => a.TableName)));
                 cmd.ExecuteNonQuery();
             }
             files.Add((tags, TagStore.FileName));
         }
         return (files, counts);
+    }
+
+    /// <summary>Applies the audio-transcript choice to the examiner's tags and, when included, a filtered copy of
+    /// the transcription results, then records it in the build log. The original schema of the tags database is kept.</summary>
+    static void PrepareExaminerData(CaseSession s, string staging, PortableSelection sel, List<(string, string)> files, IProgress<string>? log)
+    {
+        log?.Report(sel.Transcripts ? "Audio transcripts: included (exported audio only)" : "Audio transcripts: not included");
+        var (keys, refs) = ExportedMedia(s, sel, files);
+
+        var tagsIdx = files.FindIndex(f => f.Item2 == TagStore.FileName);
+        var tagsSrc = tagsIdx >= 0 ? files[tagsIdx].Item1 : File.Exists(s.Tags.Path) ? s.Tags.Path : null;
+        if (tagsSrc is not null)
+        {
+            var tags = Path.Combine(staging, TagStore.FileName);
+            if (!string.Equals(Path.GetFullPath(tagsSrc), Path.GetFullPath(tags), StringComparison.OrdinalIgnoreCase))
+                File.Copy(tagsSrc, tags, true);
+            ApplyTranscriptPolicy(tags, sel.Transcripts, keys, sel.TaggedFiles || (sel.Tables is null && !sel.TaggedOnly));
+            if (tagsIdx >= 0) files[tagsIdx] = (tags, TagStore.FileName);
+            else files.Add((tags, TagStore.FileName));
+        }
+
+        if (!sel.Transcripts || refs.Count == 0) return;
+        var aiSrc = AiStore.For(s).Path;
+        if (!File.Exists(aiSrc)) return;
+        var ai = Path.Combine(staging, AiStore.FileName);
+        if (CopyTranscriptions(aiSrc, ai, refs))
+            files.Add((ai, AiStore.FileName));
+    }
+
+    /// <summary>File keys and media-ref ids of the media this package actually carries.</summary>
+    static (HashSet<string> Keys, HashSet<string> Refs) ExportedMedia(CaseSession s, PortableSelection sel, IReadOnlyList<(string Src, string Rel)> files)
+    {
+        var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var refs = new HashSet<string>(StringComparer.Ordinal);
+        if (!sel.Media) return (keys, refs);
+        var rels = files.Select(f => f.Rel.Replace('\\', '/')).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            using var con = s.OpenDb();
+            foreach (var m in new MediaResolver(s).All(con, int.MaxValue))
+            {
+                var packaged = false;
+                if (m.ExtractionPath is { } ep && rels.Contains(ep.Replace('\\', '/').TrimStart('/'))) packaged = true;
+                else
+                {
+                    foreach (var k in TranscriptNotes.Keys(m))
+                        if (rels.Contains(k)) { packaged = true; break; }
+                }
+                if (!packaged && m.Exists)
+                {
+                    try
+                    {
+                        var rel = Path.GetRelativePath(s.RootDir, m.LocalFile()).Replace('\\', '/');
+                        if (rels.Contains(rel)) packaged = true;
+                    }
+                    catch (Exception e) when (e is IOException or ArgumentException) { }
+                }
+                if (!packaged) continue;
+                refs.Add(m.RefId);
+                foreach (var k in TranscriptNotes.Keys(m)) keys.Add(k);
+            }
+        }
+        catch (SqliteException) { }
+        return (keys, refs);
+    }
+
+    /// <summary>Keeps automatic transcripts only on exported audio when they were requested; otherwise strips them,
+    /// leaving the examiner's own tag and note. A row that then has no tag and no note is dropped.</summary>
+    static void ApplyTranscriptPolicy(string path, bool include, HashSet<string> exportedKeys, bool taggedFiles)
+    {
+        using var con = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ToString());
+        con.Open();
+        using var q = con.CreateCommand();
+        q.CommandText = "SELECT name FROM sqlite_master WHERE type='table' AND name='tags'";
+        if (q.ExecuteScalar() is null) return;
+        q.CommandText = "SELECT table_name,row_id,tag,note FROM tags";
+        var updates = new List<(string Table, long Row, string Note)>();
+        var deletes = new List<(string Table, long Row)>();
+        using (var r = q.ExecuteReader())
+            while (r.Read())
+            {
+                var table = r.GetString(0);
+                var row = r.GetInt64(1);
+                var tag = r.GetString(2);
+                var note = r.GetString(3);
+                var file = table.StartsWith(TagStore.FilePrefix, StringComparison.Ordinal);
+                var key = file ? TagStore.FileKey(table[TagStore.FilePrefix.Length..]) : "";
+                var exported = file && exportedKeys.Contains(key);
+                if (file && !taggedFiles && !exported) { deletes.Add((table, row)); continue; }
+                var next = include && exported ? note : TagStore.WithoutTranscript(note);
+                if (string.IsNullOrWhiteSpace(tag) && next.Length == 0) deletes.Add((table, row));
+                else if (next != note) updates.Add((table, row, next));
+            }
+        foreach (var (table, row, note) in updates)
+        {
+            using var cmd = con.CreateCommand();
+            cmd.CommandText = "UPDATE tags SET note=@n WHERE table_name=@t AND row_id=@r";
+            cmd.Parameters.AddWithValue("@n", note);
+            cmd.Parameters.AddWithValue("@t", table);
+            cmd.Parameters.AddWithValue("@r", row);
+            cmd.ExecuteNonQuery();
+        }
+        foreach (var (table, row) in deletes)
+        {
+            using var cmd = con.CreateCommand();
+            cmd.CommandText = "DELETE FROM tags WHERE table_name=@t AND row_id=@r";
+            cmd.Parameters.AddWithValue("@t", table);
+            cmd.Parameters.AddWithValue("@r", row);
+            cmd.ExecuteNonQuery();
+        }
+    }
+
+    /// <summary>Copies transcription results that cite an exported media item, with their revisions and sends, into a
+    /// new AI base. Returns whether any row was written.</summary>
+    static bool CopyTranscriptions(string src, string dst, HashSet<string> refIds)
+    {
+        using var from = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = src, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString());
+        using var to = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = dst, Pooling = false }.ToString());
+        from.Open();
+        to.Open();
+        using (var schema = to.CreateCommand())
+        {
+            schema.CommandText = """
+                CREATE TABLE IF NOT EXISTS sends(id INTEGER PRIMARY KEY, at INTEGER, provider TEXT, location TEXT, model TEXT, purpose TEXT, sent TEXT);
+                CREATE TABLE IF NOT EXISTS results(id INTEGER PRIMARY KEY, at INTEGER, kind TEXT, provider TEXT, location TEXT, model TEXT,
+                  prompt TEXT, scope TEXT, output TEXT, cited TEXT, unknown TEXT, send_id INTEGER);
+                CREATE TABLE IF NOT EXISTS done(key TEXT PRIMARY KEY, at INTEGER);
+                CREATE TABLE IF NOT EXISTS revisions(id INTEGER PRIMARY KEY, result_id INTEGER, at INTEGER, action TEXT, text TEXT);
+                """;
+            schema.ExecuteNonQuery();
+        }
+        using var q = from.CreateCommand();
+        q.CommandText = "SELECT id,at,kind,provider,location,model,prompt,scope,output,cited,unknown,send_id FROM results WHERE kind = 'Transcription'";
+        var copied = new List<(long Id, long? Send)>();
+        using (var r = q.ExecuteReader())
+            while (r.Read())
+            {
+                var cited = r.IsDBNull(9) ? "" : r.GetString(9);
+                if (!refIds.Any(id => cited.Contains("[media#" + id + "]", StringComparison.Ordinal))) continue;
+                using var ins = to.CreateCommand();
+                ins.CommandText = """
+                    INSERT INTO results(id,at,kind,provider,location,model,prompt,scope,output,cited,unknown,send_id)
+                    VALUES(@id,@at,@kind,@provider,@location,@model,@prompt,@scope,@output,@cited,@unknown,@send)
+                    """;
+                ins.Parameters.AddWithValue("@id", r.GetInt64(0));
+                ins.Parameters.AddWithValue("@at", r.GetInt64(1));
+                ins.Parameters.AddWithValue("@kind", r.GetString(2));
+                ins.Parameters.AddWithValue("@provider", r.IsDBNull(3) ? "" : r.GetString(3));
+                ins.Parameters.AddWithValue("@location", r.IsDBNull(4) ? "" : r.GetString(4));
+                ins.Parameters.AddWithValue("@model", r.IsDBNull(5) ? "" : r.GetString(5));
+                ins.Parameters.AddWithValue("@prompt", r.IsDBNull(6) ? "" : r.GetString(6));
+                ins.Parameters.AddWithValue("@scope", r.IsDBNull(7) ? "" : r.GetString(7));
+                ins.Parameters.AddWithValue("@output", r.IsDBNull(8) ? "" : r.GetString(8));
+                ins.Parameters.AddWithValue("@cited", cited);
+                ins.Parameters.AddWithValue("@unknown", r.IsDBNull(10) ? "[]" : r.GetString(10));
+                long? send = r.IsDBNull(11) ? null : r.GetInt64(11);
+                ins.Parameters.AddWithValue("@send", (object?)send ?? DBNull.Value);
+                ins.ExecuteNonQuery();
+                copied.Add((r.GetInt64(0), send));
+            }
+        if (copied.Count == 0) return false;
+        foreach (var send in copied.Select(x => x.Send).OfType<long>().Distinct())
+        {
+            using var one = from.CreateCommand();
+            one.CommandText = "SELECT id,at,provider,location,model,purpose,sent FROM sends WHERE id=@id";
+            one.Parameters.AddWithValue("@id", send);
+            using var r = one.ExecuteReader();
+            if (!r.Read()) continue;
+            using var ins = to.CreateCommand();
+            ins.CommandText = "INSERT OR IGNORE INTO sends(id,at,provider,location,model,purpose,sent) VALUES(@id,@at,@p,@l,@m,@u,@s)";
+            ins.Parameters.AddWithValue("@id", r.GetInt64(0));
+            ins.Parameters.AddWithValue("@at", r.GetValue(1));
+            ins.Parameters.AddWithValue("@p", r.IsDBNull(2) ? "" : r.GetString(2));
+            ins.Parameters.AddWithValue("@l", r.IsDBNull(3) ? "" : r.GetString(3));
+            ins.Parameters.AddWithValue("@m", r.IsDBNull(4) ? "" : r.GetString(4));
+            ins.Parameters.AddWithValue("@u", r.IsDBNull(5) ? "" : r.GetString(5));
+            ins.Parameters.AddWithValue("@s", r.IsDBNull(6) ? "" : r.GetString(6));
+            ins.ExecuteNonQuery();
+        }
+        foreach (var (id, _) in copied)
+        {
+            using var one = from.CreateCommand();
+            one.CommandText = "SELECT id,result_id,at,action,text FROM revisions WHERE result_id=@id";
+            one.Parameters.AddWithValue("@id", id);
+            using var r = one.ExecuteReader();
+            while (r.Read())
+            {
+                using var ins = to.CreateCommand();
+                ins.CommandText = "INSERT OR IGNORE INTO revisions(id,result_id,at,action,text) VALUES(@id,@r,@at,@a,@t)";
+                ins.Parameters.AddWithValue("@id", r.GetInt64(0));
+                ins.Parameters.AddWithValue("@r", r.GetInt64(1));
+                ins.Parameters.AddWithValue("@at", r.GetValue(2));
+                ins.Parameters.AddWithValue("@a", r.IsDBNull(3) ? "" : r.GetString(3));
+                ins.Parameters.AddWithValue("@t", r.IsDBNull(4) ? "" : r.GetString(4));
+                ins.ExecuteNonQuery();
+            }
+        }
+        return true;
     }
 
     [GeneratedRegex(@"^([A-Za-z]:[\\/]|\\\\)")]

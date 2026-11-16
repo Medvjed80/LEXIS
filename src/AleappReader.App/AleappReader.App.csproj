@@ -11,7 +11,7 @@
     <RootNamespace>AleappReader.App</RootNamespace>
     <Product>LEXIS - LEAPP Reader</Product>
     <ApplicationIcon>app.ico</ApplicationIcon>
-    <Version>1.2.5</Version>
+    <Version>1.2.7</Version>
   </PropertyGroup>
 
   <ItemGroup>

@@ -39,6 +39,7 @@ public static class RecordGrid
             l.PreviewKeyDown += (_, a) => a.Handled |= a.Key == Key.Space && Keyboard.Modifiers == ModifierKeys.None && ToggleChecks(l.DataContext, l.SelectedItems);
             l.MouseDoubleClick += (_, a) =>
             {
+                if (a.OriginalSource is DependencyObject src && InsidePlayer(src)) return; // play stays in the preview
                 if (l.DataContext is GalleryViewModel gv && a.OriginalSource is DependencyObject o && ItemsControl.ContainerFromElement(l, o) is ListBoxItem { DataContext: GalleryItem g })
                     gv.Open(g);
             };
@@ -151,8 +152,9 @@ public static class RecordGrid
             Add(menu, $"Check {n} message(s)", () => cv.Check(recs.Select(r => r.RowId), true));
             Add(menu, $"Uncheck {n} message(s)", () => cv.Check(recs.Select(r => r.RowId), false));
         }
-        if (g.DataContext is ConversationViewModel one && g.SelectedItems.OfType<ConversationItem>().ToList() is [var chat])
-            menu.Items.Add(AiLater(main, one.Session, "Reading the whole chat…", () => one.WholeChat(chat)));
+        if (g.DataContext is ConversationViewModel conv && g.SelectedItems.OfType<ConversationItem>().ToList() is { Count: > 0 } selChats)
+            menu.Items.Add(AiLater(main, conv.Session, selChats.Count == 1 ? "Reading the whole chat…" : $"Reading {selChats.Count:N0} selected chats…",
+                () => conv.SelectionScope(selChats)));
         else if (main.SessionOf(recs[0].Artifact) is { } s)
         {
             var mine = recs.Where(r => main.SessionOf(r.Artifact) == s).ToList(); // one device per AI run
@@ -304,6 +306,14 @@ public static class RecordGrid
             ai.Items.Clear();
             foreach (var x in built.Items.Cast<object>().ToList()) { built.Items.Remove(x); ai.Items.Add(x); }
         }
+    }
+
+    /// <summary>A click inside the in-place player (play, pause, the time bar) is not a request to open the file.</summary>
+    static bool InsidePlayer(DependencyObject o)
+    {
+        for (; o != null; o = o is Visual ? VisualTreeHelper.GetParent(o) : LogicalTreeHelper.GetParent(o))
+            if (o is Views.PlayerView) return true;
+        return false;
     }
 
     static void Add(ItemsControl menu, string header, Action act, string gesture = "")

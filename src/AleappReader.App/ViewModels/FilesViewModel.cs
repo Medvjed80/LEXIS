@@ -65,6 +65,8 @@ public partial class FilesViewModel : ObservableObject
     [ObservableProperty] private IReadOnlyList<FileRow> rows = [];
     [ObservableProperty] private IReadOnlyList<FolderNode> folders = [];
     [ObservableProperty] private FileRow? selected;
+    /// <summary>The selected file when it is audio, copied out so the preview can play it. Null for any other file.</summary>
+    [ObservableProperty] private MediaRef? previewMedia;
     [ObservableProperty] private string filter = "";
     [ObservableProperty] private bool usedOnly;
     /// <summary>Only the tagged files (tagged here or in the gallery).</summary>
@@ -117,6 +119,15 @@ public partial class FilesViewModel : ObservableObject
     readonly Action<int>? _counted;
     public string Title => _only ?? "Extraction Files";
     public bool AnyKind => _only is null;
+    internal bool IsSession(CaseSession s) => _s == s;
+
+    /// <summary>Reloads file tags after a change in the details or in Tagged Items, keeping the current selection.</summary>
+    public void RefreshTags()
+    {
+        var path = Selected?.Path;
+        ApplyFilter();
+        if (path is not null) Selected = Rows.FirstOrDefault(r => r.Path == path);
+    }
 
     async Task LoadAsync()
     {
@@ -267,16 +278,36 @@ public partial class FilesViewModel : ObservableObject
     [RelayCommand] void PrevPage() => ShowPage(_page - 1);
     [RelayCommand] void NextPage() => ShowPage(_page + 1);
 
-    /// <summary>Shows a recorded source file: its folder in the tree, the file selected. Waits for the list if needed.</summary>
+    /// <summary>Shows a recorded source file: its folder in the tree, the file selected. Waits for the list if needed.
+    /// A file inside an archive is shown by opening the archive first, then selecting the member.</summary>
     public void Reveal(string recorded)
     {
-        var rel = recorded.Replace('\\', '/').TrimStart('/');
+        var rel = TagStore.FileKey(recorded);
+        var innerAt = rel.IndexOf(ExtractionFiles.Inside, StringComparison.Ordinal);
+        var outer = innerAt > 0 ? rel[..innerAt] : rel;
         if (_all.Count == 0) { _reveal = rel; return; }
         _reveal = null;
-        var device = EvidenceOrigin.DevicePath(rel);
+        var device = EvidenceOrigin.DevicePath(outer);
         SelectFolder(device);
+        Selected = Rows.FirstOrDefault(r => r.Path == outer);
+        if (Selected is null)
+        {
+            Info = $"{EvidenceOrigin.DevicePath(rel)} is not in the extraction. " + Info;
+            return;
+        }
+        if (innerAt > 0) _ = RevealInside(rel, outer);
+    }
+
+    async Task RevealInside(string rel, string archive)
+    {
+        if (!_opened.Contains(archive))
+        {
+            Selected = Rows.FirstOrDefault(r => r.Path == archive) ?? Selected;
+            await ExploreArchive();
+        }
+        SelectFolder(EvidenceOrigin.DevicePath(rel));
         Selected = Rows.FirstOrDefault(r => r.Path == rel);
-        if (Selected is null) Info = $"{device} is not in the extraction. " + Info;
+        if (Selected is null) Info = $"{EvidenceOrigin.DevicePath(rel)} is not in the extraction. " + Info;
     }
 
     /// <summary>The folder of a device path picked in the tree, its parents opened, every filter cleared.</summary>
@@ -459,7 +490,9 @@ public partial class FilesViewModel : ObservableObject
 
     async partial void OnSelectedChanged(FileRow? value)
     {
+        PreviewMedia = null;
         if (value is null || _s.Extraction is not { } x) { Hex = Text = Detected = ""; Plist = []; FileActions = []; return; }
+        if (value.Category == RawFiles.Audio) _ = LoadPreviewAsync(value, x);
         _main.Details.ShowFile(_s, value.Path, value.Device, value.Size, value.Artifacts);
         if (_archiveOf.TryGetValue(value.Path, out var archive)) _main.Details.Fields.Insert(2, new Field("Inside the archive", archive));
         FileActions = Actions(value, false);
@@ -506,6 +539,50 @@ public partial class FilesViewModel : ObservableObject
             return;
         }
         Text = new string(System.Text.Encoding.UTF8.GetString(bytes).Select(c => char.IsControl(c) && c is not '\n' and not '\t' ? '·' : c).ToArray()) + more;
+    }
+
+    /// <summary>Copies an audio file out of the extraction so the preview can play it, dropped when another file is selected.</summary>
+    async Task LoadPreviewAsync(FileRow file, ExtractionFiles x)
+    {
+        var copy = await Task.Run(() => x.CopyOut(file.Path));
+        if (Selected == file && copy is not null)
+            PreviewMedia = x.ToMedia(file.Path, copy) with { AudioFolders = SilkAudio.Folders(_s) };
+    }
+
+    /// <summary>The files selected in the list or the thumbnail page (whichever is showing), else the current row.</summary>
+    List<FileRow> Chosen(object? parameter)
+    {
+        var rows = new List<FileRow>();
+        if (parameter is object[] { Length: >= 3 } parts && parts[0] is bool thumbs)
+        {
+            if (parts[thumbs ? 2 : 1] is System.Collections.IEnumerable items)
+                foreach (var o in items)
+                    if (o is FileRow r) rows.Add(r);
+                    else if (o is FileTile t) rows.Add(t.Row);
+        }
+        rows = rows.DistinctBy(r => r.Path).ToList();
+        if (rows.Count == 0 && Selected is { } one) rows.Add(one);
+        return rows;
+    }
+
+    /// <summary>Opens the AI window on the selected files only.</summary>
+    [RelayCommand]
+    async Task AnalyzeSelection(object? selected)
+    {
+        var rows = Chosen(selected);
+        if (rows.Count == 0) { _main.Status = "Select one or more files first."; return; }
+        if (_s.Extraction is not { } x) { _main.Status = "The extraction is not reachable."; return; }
+        _main.Status = "Reading the selected files…";
+        var media = new List<MediaRef>();
+        var folders = SilkAudio.Folders(_s);
+        foreach (var f in rows)
+        {
+            var copy = await Task.Run(() => x.CopyOut(f.Path));
+            if (copy is not null) media.Add(x.ToMedia(f.Path, copy) with { AudioFolders = folders });
+        }
+        _main.Status = "";
+        if (media.Count == 0) { _main.Status = "The selected files cannot be read from the extraction."; return; }
+        _main.OpenAi(_s, new AiScope($"{media.Count:N0} selected file{(media.Count == 1 ? "" : "s")} of the extraction", [], media));
     }
 
     List<FileAction> Actions(FileRow f, bool archive)
@@ -593,10 +670,8 @@ public partial class FilesViewModel : ObservableObject
         if (Selected is not { } f) return;
         var t = string.IsNullOrEmpty(tag) || f.Tag == tag ? null : tag;
         _s.Tags.SetFiles([f.Path], t);
-        _main.RefreshTagCount();
-        foreach (var tab in _main.Tabs) if (tab.Content is TaggedViewModel tv) tv.Refresh();
-        ApplyFilter();
-        Selected = Rows.FirstOrDefault(r => r.Path == f.Path);
+        _main.OnFileTagChanged(_s);
+        if (Selected is null || Selected.Path != f.Path) Selected = Rows.FirstOrDefault(r => r.Path == f.Path);
         _main.Status = t is null ? $"Tag removed from {f.Device}" : $"Tagged {f.Device} as \"{t}\"";
     }
 

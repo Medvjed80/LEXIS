@@ -29,6 +29,10 @@ On top of the LEAPP reports it adds:
 - File system extractions: unpacked folder, zip, tar, tar.gz
 - Extractions from major third-party forensic tools (UFD, GK)
 - iTunes/Finder backups, including encrypted backups from iOS 10.2 and later
+- iOS advanced logical extractions from UFADE and Cellebrite UFED (a `.zip` plus a `.ufd`): the encrypted
+  iTunes backup inside `Backup Service/.../Snapshot` is read by iLEAPP as an iTunes backup, with the password
+  from the UFD passed only through the environment. Media under `AFC Service` is browsed as
+  `/private/var/mobile/Media`. The zip and the UFD stay the evidence. A `.ufd` written in Windows cp1252 is read.
 - Android adb backups (`.ab`), plain or encrypted
 
 Evidence is never modified: databases are opened from temporary copies, so the original
@@ -145,7 +149,8 @@ runtime, which Windows 11 already has, is needed only for the HTML previews and 
   can also act as the model server.
 - On checked records, chats or media: summarize, translate, explain, describe images with OCR,
   and run a complete analysis of chosen data categories against an objective. Each answer cites
-  the records it used.
+  the records it used. **AI on selection** (the chat list, the gallery and Extraction Files) runs
+  that analysis on the chats or files that are selected, not on every checked row.
 - **Explain** on a record explains what it is and each value it holds.
 - **Video analysis**: frames taken every N % of the duration or every N seconds, described by
   the vision model, and the audio track transcribed, on one timeline, with the SHA-256 of each
@@ -153,7 +158,13 @@ runtime, which Windows 11 already has, is needed only for the HTML previews and 
 - The examiner can correct or exclude any AI analysis; the model's text is kept, nothing is deleted.
 - Audio transcription with **whisper.cpp** on this machine, set up from the AI settings (each
   file kept only if its SHA-256 is the published one). Opus, AMR, M4A and MP3 are converted by
-  the ffmpeg carried by LEXIS.
+  the ffmpeg carried by LEXIS. **Transcribe audio** on the chat list transcribes only the voice
+  and audio messages of the selected chats. The transcript is saved in the AI base and written
+  into that audio file's note (an examiner's own note is kept and the transcript appended; a
+  note written by an earlier transcription is replaced).
+- Audio plays from the preview: the gallery tile, the details pane, a chat bubble and the
+  Extraction Files viewer. Play and pause stay in place. Opus, AMR, Ogg and SILK are converted
+  for listening; the original file is not changed.
 - **MCP server** inside the open LEXIS: LM Studio, Claude Desktop or any MCP client can read
   the open case through it.
 
@@ -219,18 +230,21 @@ Not supported: encrypted legacy iTunes backups (`Manifest.mbdb`, iOS before 10.2
 
 ## Build
 
-You need the .NET 10 SDK and Python 3.10+. Each LEAPP needs its own virtual environment,
-`python -m venv .venv`, created inside `ALEAPP\` and inside `ILEAPP\`.
+You need the .NET 10 SDK and Python 3.10–3.14 (3.12 recommended). `build.ps1` creates
+each LEAPP's `.venv` if it is missing. Use `-Python` to point at the interpreter
+(needed if `python` is not on PATH). The first run needs internet: pip installs each
+tool's requirements, and ALEAPP clones `mister-skinnylegs` from GitHub.
 
 ```powershell
-.\build.ps1              # PyInstaller builds of ALEAPP and iLEAPP, then the reader with both embedded
-.\build.ps1 -SkipLeapp   # reuse the last LEAPP builds
+.\build.ps1
+.\build.ps1 -Python C:\path\to\python.exe
+.\build.ps1 -SkipLeapp   # reuse the last LEAPP builds in ALEAPP\dist\ALEAPP and ILEAPP\dist\iLEAPP
 dotnet test              # Core tests
 ```
 
-The output is `release\LEXIS-<version>-win-x64.exe` plus its `.sha256`. The version comes
-from `<Version>` in `src/AleappReader.App/AleappReader.App.csproj`. Release files are
-published on GitHub Releases and are never committed.
+The output is `release\LEXIS-<version>-engines-win-x64.exe` plus its `.sha256`. The
+version comes from `<Version>` in `src/AleappReader.App/AleappReader.App.csproj`. Release
+files are published on GitHub Releases and are never committed.
 
 ## Layout
 

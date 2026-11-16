@@ -21,30 +21,31 @@ public class BackupTests : IDisposable
         Assert.Null(ItunesBackup.Unwrap(new byte[16], wrapped)); // the wrong key fails the integrity check
     }
 
-    [Fact]
-    public void An_encrypted_backup_opens_locked_and_reads_with_its_password()
+    internal const string SampleId = "3d0d7e5fb2ce288813306e4d4636395e047a3d28";
+    internal const string SamplePath = "HomeDomain/Library/SMS/sms.db";
+
+    /// <summary>An encrypted backup folder whose password is <paramref name="password"/>: HomeDomain/Library/SMS/sms.db is "sms".</summary>
+    internal static string BuildEncryptedBackup(string dir, string password)
     {
         byte[] Rnd(int n) => RandomNumberGenerator.GetBytes(n);
         var (dpsl, salt, classKey, manifestKey, fileKey) = (Rnd(20), Rnd(20), Rnd(32), Rnd(32), Rnd(32));
-        var kek = Rfc2898DeriveBytes.Pbkdf2(Rfc2898DeriveBytes.Pbkdf2(Encoding.UTF8.GetBytes("pw"), dpsl, 10, HashAlgorithmName.SHA256, 32),
+        var kek = Rfc2898DeriveBytes.Pbkdf2(Rfc2898DeriveBytes.Pbkdf2(Encoding.UTF8.GetBytes(password), dpsl, 10, HashAlgorithmName.SHA256, 32),
                                             salt, 1, HashAlgorithmName.SHA1, 32);
         var keybag = Tlv(("VERS", Be(4)), ("TYPE", Be(1)), ("UUID", Rnd(16)), ("WRAP", Be(0)), ("SALT", salt), ("ITER", Be(1)),
                          ("DPWT", Be(1)), ("DPIC", Be(10)), ("DPSL", dpsl),
                          ("UUID", Rnd(16)), ("CLAS", Be(3)), ("WRAP", Be(2)), ("KTYP", Be(0)), ("WPKY", Wrap(kek, classKey)));
         byte[] Classed(byte[] key) => [3, 0, 0, 0, .. Wrap(classKey, key)];
-
-        var backup = Path.Combine(_c.Root, "enc-backup");
-        var id = "3d0d7e5fb2ce288813306e4d4636395e047a3d28";
-        Directory.CreateDirectory(Path.Combine(backup, id[..2]));
-        File.WriteAllBytes(Path.Combine(backup, id[..2], id), Enc(fileKey, "sms"u8.ToArray()));
-        File.WriteAllBytes(Path.Combine(backup, id[..2], id[..2] + "ff"), Enc(fileKey, "x"u8.ToArray()));
+        var id = SampleId;
+        Directory.CreateDirectory(Path.Combine(dir, id[..2]));
+        File.WriteAllBytes(Path.Combine(dir, id[..2], id), Enc(fileKey, "sms"u8.ToArray()));
+        File.WriteAllBytes(Path.Combine(dir, id[..2], id[..2] + "ff"), Enc(fileKey, "x"u8.ToArray()));
         var mbFile = Plist(new Dictionary<string, object>
         {
             ["$top"] = new Dictionary<string, object> { ["root"] = new Bplist.Uid(1) },
             ["$objects"] = new object[] { "$null", new Dictionary<string, object> { ["Size"] = 3L, ["ProtectionClass"] = 3L, ["EncryptionKey"] = new Bplist.Uid(2) },
                                           new Dictionary<string, object> { ["NS.data"] = Classed(fileKey) } },
         });
-        var plainDb = Path.Combine(_c.Root, "plain-manifest.db");
+        var plainDb = dir + ".plain.db";
         using (var con = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={plainDb};Pooling=False"))
         {
             con.Open();
@@ -56,12 +57,18 @@ public class BackupTests : IDisposable
             cmd.Parameters.AddWithValue("$f", mbFile);
             cmd.ExecuteNonQuery();
         }
-        File.WriteAllBytes(Path.Combine(backup, "Manifest.db"), Enc(manifestKey, File.ReadAllBytes(plainDb)));
-        File.WriteAllBytes(Path.Combine(backup, "Manifest.plist"), Plist(new Dictionary<string, object>
+        File.WriteAllBytes(Path.Combine(dir, "Manifest.db"), Enc(manifestKey, File.ReadAllBytes(plainDb)));
+        File.WriteAllBytes(Path.Combine(dir, "Manifest.plist"), Plist(new Dictionary<string, object>
         {
             ["IsEncrypted"] = true, ["BackupKeyBag"] = keybag, ["ManifestKey"] = Classed(manifestKey),
         }));
+        return dir;
+    }
 
+    [Fact]
+    public void An_encrypted_backup_opens_locked_and_reads_with_its_password()
+    {
+        var backup = BuildEncryptedBackup(Path.Combine(_c.Root, "enc-backup"), "pw");
         using (var locked = ExtractionFiles.Open(backup)!) Assert.True(locked.Locked);
         Assert.Throws<CryptographicException>(() => ExtractionFiles.Open(backup, "wrong"));
         using var x = ExtractionFiles.Open(backup, "pw")!;

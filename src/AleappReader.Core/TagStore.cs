@@ -127,7 +127,20 @@ public sealed class TagStore
         cmd.ExecuteNonQuery();
     }
 
-    public IReadOnlyList<TagEntry> All(string? table = null)
+    /// <summary>Whether a tags-table row is a tag or a note the examiner wrote. An automatic transcript stored
+    /// with an empty tag does not count: the text stays on the file, but the file is not a tagged item.</summary>
+    public static bool IsTagged(TagEntry t) =>
+        !string.IsNullOrWhiteSpace(t.Tag) || TranscriptNotes.ExaminerText(t.Note).Length > 0;
+
+    /// <summary>The note with the automatic transcript removed, so an export can keep the examiner's text only.</summary>
+    public static string WithoutTranscript(string note)
+    {
+        var head = TranscriptNotes.ExaminerText(note);
+        return head;
+    }
+
+    /// <summary>Every row in the tags table, including notes that only hold an automatic transcript.</summary>
+    public IReadOnlyList<TagEntry> Rows(string? table = null)
     {
         if (!File.Exists(Path)) return [];
         using var con = Open();
@@ -142,6 +155,10 @@ public sealed class TagStore
                 DateTimeOffset.FromUnixTimeSeconds(r.GetInt64(4))));
         return list;
     }
+
+    /// <summary>Tagged records and files: an explicit tag, or a note the examiner wrote. Automatic transcripts alone
+    /// are omitted (existing cases included) without deleting their text.</summary>
+    public IReadOnlyList<TagEntry> All(string? table = null) => [.. Rows(table).Where(IsTagged)];
 
     public Dictionary<long, TagEntry> ForTable(string table) => All(table).ToDictionary(t => t.RowId);
 
@@ -166,8 +183,102 @@ public sealed class TagStore
     public Dictionary<string, string> FileTags()
     {
         var d = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var t in All().Where(t => t.TableName.StartsWith(FilePrefix, StringComparison.Ordinal)))
+        foreach (var t in Rows().Where(t => t.TableName.StartsWith(FilePrefix, StringComparison.Ordinal) && IsTagged(t)))
             d[FileKey(t.TableName[FilePrefix.Length..])] = t.Tag;
         return d;
+    }
+
+    /// <summary>Notes of tagged files, keyed like <see cref="FileTags"/>, skipping files with an empty note.</summary>
+    public Dictionary<string, string> FileNotes()
+    {
+        var d = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var t in Rows().Where(t => t.TableName.StartsWith(FilePrefix, StringComparison.Ordinal) && t.Note != ""))
+            d[FileKey(t.TableName[FilePrefix.Length..])] = t.Note;
+        return d;
+    }
+
+    /// <summary>The note of one row, or null when it has never been tagged.</summary>
+    public string? NoteOf(string table, long rowId)
+    {
+        if (!File.Exists(Path)) return null;
+        using var con = Open();
+        using var cmd = con.CreateCommand();
+        cmd.CommandText = "SELECT note FROM tags WHERE table_name=@t AND row_id=@r";
+        cmd.Parameters.AddWithValue("@t", table);
+        cmd.Parameters.AddWithValue("@r", rowId);
+        return cmd.ExecuteScalar() as string;
+    }
+
+    /// <summary>Sets the note and leaves the tag as it is. A row that does not exist yet is stored with an empty tag,
+    /// so a transcript is a note, not a tag the examiner chose.</summary>
+    public void SetNote(string table, long rowId, string note)
+    {
+        using var con = Open();
+        using var cmd = con.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO tags(table_name,row_id,tag,note,created) VALUES(@t,@r,'',@n,@c)
+            ON CONFLICT(table_name,row_id) DO UPDATE SET note=excluded.note
+            """;
+        cmd.Parameters.AddWithValue("@t", table);
+        cmd.Parameters.AddWithValue("@r", rowId);
+        cmd.Parameters.AddWithValue("@n", note);
+        cmd.Parameters.AddWithValue("@c", DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>The first line of a note written by automatic transcription. An examiner's own note never starts a
+    /// replacement: it is kept, and a new transcript is appended under this line. A note that is only a previous
+    /// automatic transcript (or has one at the end) has that part replaced.</summary>
+    public const string AutoTranscriptHeader = "Transcript (automatic):";
+
+    /// <summary>The note to store for a new transcript: the examiner's text, then the transcript. A previous automatic
+    /// transcript is replaced; anything written before it stays.</summary>
+    public static string MergeTranscript(string? existing, string transcript)
+    {
+        var block = AutoTranscriptHeader + "\n" + transcript.Trim();
+        if (string.IsNullOrWhiteSpace(existing)) return block;
+        var note = existing.Replace("\r\n", "\n").Trim();
+        var at = note.IndexOf(AutoTranscriptHeader, StringComparison.Ordinal);
+        if (at < 0) return note + "\n\n" + block;
+        var head = note[..at].TrimEnd();
+        return head.Length == 0 ? block : head + "\n\n" + block;
+    }
+
+    /// <summary>Writes a transcription into the note of a file (gallery and Extraction Files share <see cref="FileKey"/>).
+    /// Does nothing for a blank transcript, or when the note already reads the same. Keeps an examiner's note and any tag
+    /// the file already has. Returns whether the note was written.</summary>
+    public bool WriteFileTranscript(string path, string transcript)
+    {
+        if (string.IsNullOrWhiteSpace(transcript)) return false;
+        var table = FilePrefix + FileKey(path);
+        var existing = NoteOf(table, 0);
+        var merged = MergeTranscript(existing, transcript);
+        if (existing is not null && existing.Replace("\r\n", "\n").Trim() == merged) return false;
+        SetNote(table, 0, merged);
+        return true;
+    }
+
+    /// <summary>Writes many file notes in one transaction. An existing tag is left as it is. An empty list writes nothing.</summary>
+    public void SetFileNotes(IReadOnlyList<(string Table, string Note)> rows)
+    {
+        if (rows.Count == 0) return;
+        using var con = Open();
+        using var tx = con.BeginTransaction();
+        using var cmd = con.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = """
+            INSERT INTO tags(table_name,row_id,tag,note,created) VALUES(@t,0,'',@n,@c)
+            ON CONFLICT(table_name,row_id) DO UPDATE SET note=excluded.note
+            """;
+        var table = cmd.Parameters.Add("@t", SqliteType.Text);
+        var note = cmd.Parameters.Add("@n", SqliteType.Text);
+        cmd.Parameters.AddWithValue("@c", DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+        foreach (var row in rows)
+        {
+            table.Value = row.Table;
+            note.Value = row.Note;
+            cmd.ExecuteNonQuery();
+        }
+        tx.Commit();
     }
 }
