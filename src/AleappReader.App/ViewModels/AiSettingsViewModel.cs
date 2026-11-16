@@ -347,6 +347,9 @@ public partial class AiSettingsViewModel : ObservableObject
         { Message = "Two servers have the same name (Ollama and LM Studio are the local engines, Claude CLI is the CLI)."; return; }
         if (servers.FirstOrDefault(p => !Uri.TryCreate(p.Address.Trim(), UriKind.Absolute, out var u) || u.Scheme is not ("http" or "https")) is { } bad)
         { Message = $"{bad.Name}: the address must start with http:// or https://"; return; }
+        // a remote server gets the case excerpts and the API key: only over TLS (http:// stays possible on this computer and the LAN)
+        if (servers.FirstOrDefault(p => new AiProvider(p.Name, p.Kind, p.Address.Trim()) is { Where: "remote" } && !p.Address.Trim().StartsWith("https://", StringComparison.OrdinalIgnoreCase)) is { } plain)
+        { Message = $"{plain.Name}: a server outside this computer and your network must use https://"; return; }
         if (!WebSearchUrl.Trim().StartsWith("https://", StringComparison.OrdinalIgnoreCase) || !WebSearchUrl.Contains("{q}"))
         { Message = "Web search address: https://, with {q} where the search words go."; return; }
         if (Enabled && Roles.All(r => r.Provider == "" || r.Model.Trim() == ""))

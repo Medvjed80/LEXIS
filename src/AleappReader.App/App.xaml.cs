@@ -25,7 +25,7 @@ public partial class App : Application
         var lexis = System.Diagnostics.Process.GetProcessesByName(System.Diagnostics.Process.GetCurrentProcess().ProcessName);
         var alone = lexis.Length == 1;
         foreach (var p in lexis) p.Dispose();
-        if (alone) _ = Task.Run(() => { try { TempWork.Sweep(TimeSpan.FromHours(6)); } catch (Exception x) when (x is IOException or UnauthorizedAccessException) { } });
+        if (alone) _ = Task.Run(() => { try { TempWork.Sweep(TimeSpan.FromHours(6)); TempWork.SweepCaseCaches(all: false, TimeSpan.FromHours(6)); } catch (Exception x) when (x is IOException or UnauthorizedAccessException) { } });
         try { ValueFormatter.Zone = TimeZoneInfo.FindSystemTimeZoneById(Settings.Current.TimeZoneId); }
         catch (TimeZoneNotFoundException) { }
 
@@ -36,6 +36,20 @@ public partial class App : Application
         // zip opens that zip by itself.
         string[] start = e.Args.Length > 0 ? e.Args : PortableCase.FindBeside(AppContext.BaseDirectory) is { } zip ? [zip] : [];
         OpenAll(window.ViewModel, start);
+    }
+
+    /// <summary>On exit, the copies of evidence made in %TEMP% are deleted, unless another LEXIS is still running.</summary>
+    protected override void OnExit(ExitEventArgs e)
+    {
+        try
+        {
+            var lexis = System.Diagnostics.Process.GetProcessesByName(System.Diagnostics.Process.GetCurrentProcess().ProcessName);
+            var alone = lexis.Length <= 1;
+            foreach (var p in lexis) p.Dispose();
+            if (alone) { ViewModels.DetailsViewModel.DeleteSourceCopies(); TempWork.SweepCaseCaches(all: true, TimeSpan.Zero); }
+        }
+        catch (Exception x) when (x is IOException or UnauthorizedAccessException or InvalidOperationException) { }
+        base.OnExit(e);
     }
 
     static async void OpenAll(ViewModels.MainViewModel vm, IEnumerable<string> paths)
@@ -105,7 +119,9 @@ public partial class App : Application
         {
             var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AleappReader");
             Directory.CreateDirectory(dir);
-            File.AppendAllText(Path.Combine(dir, "errors.log"), $"{DateTime.Now:O}{Environment.NewLine}{e.Exception}{Environment.NewLine}{Environment.NewLine}");
+            var log = Path.Combine(dir, "errors.log");
+            if (File.Exists(log) && new FileInfo(log).Length > 256 * 1024) File.Delete(log); // a small rolling log, never kept for long
+            File.AppendAllText(log, $"{DateTime.Now:O}{Environment.NewLine}{ErrorText.Describe(e.Exception)}{Environment.NewLine}{Environment.NewLine}");
         }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }

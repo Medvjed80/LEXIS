@@ -77,8 +77,8 @@ public sealed class ExportLogWindow : Window
     static void Reveal(ExportEntry? e)
     {
         if (e is null) return;
-        if (File.Exists(e.Destination)) Process.Start("explorer.exe", $"/select,\"{e.Destination}\"");
-        else if (Directory.Exists(e.Destination)) Process.Start("explorer.exe", $"\"{e.Destination}\"");
+        if (File.Exists(e.Destination)) Process.Start("explorer.exe", ["/select,", e.Destination]);
+        else if (Directory.Exists(e.Destination)) Process.Start("explorer.exe", [e.Destination]);
         else MessageBox.Show("No longer there: " + e.Destination, "Exports", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 

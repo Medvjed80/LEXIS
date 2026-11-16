@@ -11,20 +11,23 @@ namespace AleappReader.App.Views;
 /// <summary>Leaflet in WebView2. Case data reaches the page only as JSON and is rendered with textContent, never as HTML.</summary>
 public partial class MapView : UserControl
 {
-    // ponytail: Leaflet comes from unpkg (version-pinned, no SRI); vendor it beside the exe for fully offline use.
+    // Leaflet 1.9.4 (BSD-2) and Leaflet.markercluster 1.5.3 (MIT) are embedded in the exe (Assets/map) and written next to
+    // map.html: opening the map contacts no CDN. The only request that can leave the machine is the tile layer, which is
+    // added only when the examiner ticks "Online map tiles" (off by default).
     const string Html = """
         <!doctype html><html><head><meta charset="utf-8">
-        <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-        <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
-        <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://aleappreader.thumb https://tile.openstreetmap.org; connect-src 'none'">
+        <link rel="stylesheet" href="leaflet.css">
+        <link rel="stylesheet" href="MarkerCluster.css">
+        <link rel="stylesheet" href="MarkerCluster.Default.css">
         <style>html,body,#m{height:100%;margin:0;background:#eef1f5;font:12px Segoe UI}.lbl{white-space:pre-wrap;max-width:280px}
         .th{position:relative;width:40px;height:40px;box-sizing:border-box;border:2px solid var(--c);border-radius:4px;background:#fff;overflow:hidden}
         .th img{width:100%;height:100%;object-fit:cover;display:block}
         .th.none{border:none;background:none;overflow:visible}
         .th.none::after{content:'';position:absolute;left:13px;top:13px;width:10px;height:10px;border:2px solid var(--c);border-radius:7px;background:#fff}
         .num{background:none;border:none;box-shadow:none;padding:0;font-weight:600;color:#222}.num::before{display:none}</style>
-        <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-        <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+        <script src="leaflet.js"></script>
+        <script src="leaflet.markercluster.js"></script>
         </head><body><div id="m"></div><script>
         const map = L.map('m', {preferCanvas:true}).setView([20,0], 2);
         const tiles = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:19, attribution:'&copy; OpenStreetMap contributors'});
@@ -168,6 +171,12 @@ public partial class MapView : UserControl
             var dir = Path.Combine(data, "..", "map");
             Directory.CreateDirectory(dir);
             File.WriteAllText(Path.Combine(dir, "map.html"), Html);
+            foreach (var name in typeof(MapView).Assembly.GetManifestResourceNames().Where(n => n.StartsWith("map/", StringComparison.Ordinal)))
+            {
+                using var res = typeof(MapView).Assembly.GetManifestResourceStream(name)!;
+                using var outFile = File.Create(Path.Combine(dir, name["map/".Length..]));
+                res.CopyTo(outFile);
+            }
             core.SetVirtualHostNameToFolderMapping(Host, dir, CoreWebView2HostResourceAccessKind.DenyCors);
             core.Navigate($"https://{Host}/map.html");
         }

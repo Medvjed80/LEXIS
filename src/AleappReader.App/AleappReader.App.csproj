@@ -33,6 +33,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Leaflet and Leaflet.markercluster for the map, carried in the exe: opening the map contacts no CDN -->
+    <EmbeddedResource Include="Assets\map\*" LogicalName="map/%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\AleappReader.Core\AleappReader.Core.csproj" />
   </ItemGroup>
 

@@ -11,7 +11,9 @@ public sealed class Settings
 
     public string? LastOutputDir { get; set; }
     public string TimeZoneId { get; set; } = "UTC";
-    public bool OnlineMapTiles { get; set; } = true;
+    /// <summary>Off by default: a tile request tells the tile server which area is being looked at, so the map shows the
+    /// points on a blank background until the examiner turns this on (GDPR: nothing about a case leaves the machine by default).</summary>
+    public bool OnlineMapTiles { get; set; }
     public List<string> RecentCases { get; set; } = [];
     /// <summary>Shows each app's artifacts together under Applications instead of in the macro categories.</summary>
     public bool GroupByApp { get; set; }

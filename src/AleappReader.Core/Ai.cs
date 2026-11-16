@@ -1472,6 +1472,28 @@ public static class TempWork
         return !dir.Exists;
     }
 
+    /// <summary>Copies of evidence the reader makes while it works: files read out of an extraction, decrypted backup
+    /// databases, "open source copy" files and unpacked portable cases. They are deleted when LEXIS closes (and swept at
+    /// start-up after a crash), so no case data stays in %TEMP% (GDPR art. 5(1)(c),(e) and art. 32).</summary>
+    public static int SweepCaseCaches(bool all, TimeSpan age, string? root = null)
+    {
+        var left = 0;
+        var work = new DirectoryInfo(Path.Combine(root ?? Path.GetTempPath(), "AleappReader"));
+        if (!work.Exists) return 0;
+        foreach (var d in work.EnumerateDirectories())
+        {
+            var stale = all || DateTime.UtcNow - d.LastWriteTimeUtc >= age;
+            if (!stale) continue;
+            try
+            {
+                foreach (var f in d.EnumerateFiles("*", SearchOption.AllDirectories)) f.Attributes = FileAttributes.Normal;
+                d.Delete(true);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { left++; }
+        }
+        return left;
+    }
+
     /// <summary>Deletes the work folders an earlier run left (none touched in the last <paramref name="age"/>, so a running
     /// LEXIS keeps its own); returns how many remain.</summary>
     public static int Sweep(TimeSpan age, string? root = null)

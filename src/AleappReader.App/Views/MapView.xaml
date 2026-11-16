@@ -7,7 +7,7 @@
             <DockPanel>
                 <CheckBox DockPanel.Dock="Right" IsChecked="{Binding OnlineTiles}" VerticalAlignment="Center"
                           Content="Online map tiles (OpenStreetMap)"
-                          ToolTip="Tiles are downloaded from tile.openstreetmap.org: the tile server learns which area is being viewed. Untick to plot points on a blank background."/>
+                          ToolTip="Off by default. When ticked, tiles are downloaded from tile.openstreetmap.org: that server (and your network) learns which area of the case is being viewed, and your IP address. Leave unticked to plot points on a blank background, fully offline."/>
                 <StackPanel>
                     <TextBlock Style="{StaticResource ViewTitle}" Text="{Binding Title}"/>
                     <TextBlock Text="{Binding Info}" Foreground="{StaticResource MutedBrush}"/>
