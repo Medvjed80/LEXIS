@@ -1,0 +1,15 @@
+{
+  "_comment": "Example of %APPDATA%\\AleappReader\\settings.json. LEXIS creates this file itself; do not commit a real one. API keys are never written here in clear: they are stored as DPAPI-encrypted base64 in 'ProtectedKey', readable only by the same Windows user on the same PC.",
+  "TimeZoneId": "Europe/Rome",
+  "OnlineMapTiles": false,
+  "RecentCases": [],
+  "Ai": {
+    "Enabled": false,
+    "Providers": [
+      { "Name": "Ollama", "Kind": "Ollama", "Address": "http://localhost:11434", "ProtectedKey": null },
+      { "Name": "LM Studio", "Kind": "OpenAi", "Address": "http://localhost:1234/v1", "ProtectedKey": null }
+    ],
+    "ClaudeAllowed": false,
+    "McpAllowed": false
+  }
+}

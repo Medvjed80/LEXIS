@@ -9,3 +9,13 @@ obj/
 /src/AleappReader.App/engine/
 /release/
 /tools/silk/out/
+
+# local settings, keys, logs and case data: never commit
+settings.json
+errors.log
+.env
+.env.*
+*.pfx
+*.snk
+*.lcase
+_reader_*.db

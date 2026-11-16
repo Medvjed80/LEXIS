@@ -48,6 +48,16 @@
   through Manifest.db (decrypted with that password), `AFC Service` as `/private/var/mobile/Media`, and
   Applications and Lockdown Service as stored. A `.ufd` is read as UTF-8, or as Windows cp1252 when it is not UTF-8.
 
+### Security and privacy (fork hardening)
+- **Map works offline and sends nothing by default.** Leaflet and Leaflet.markercluster are embedded in the exe (no
+  unpkg request), the map page has a Content-Security-Policy, and *Online map tiles* (OpenStreetMap) is **off** by default.
+- **Logs carry no case content.** `errors.log` records exception types and stack frames, never messages, and is capped at 256 KB.
+- **No evidence copies left in %TEMP%.** The extraction cache, decrypted backup databases, source copies and unpacked portable
+  cases under `%TEMP%\AleappReader` are deleted when LEXIS exits, and swept at start-up after a crash.
+- **TLS for remote AI.** An AI server outside this computer and the local network must use `https://`.
+- **Explorer launch** uses an argument list rather than a hand-quoted command line.
+- Added `PRIVACY.md` / `PRIVACY.it.md`, `SECURITY.md`, `CHANGES-FROM-UPSTREAM.md`, `settings.example.json`, `.gitleaks.toml`.
+
 ### Fixed
 - **Portable Case export no longer fails on WhatsApp Messages with a foreign key error.** A selected-artifact export copied message rows before the LAVA media tables, and Microsoft.Data.Sqlite enforces foreign keys; a table whose media column references `_lava_media_references` (or a media reference whose item is copied later, or omitted when media is left out) was rejected with `SQLite Error 19: FOREIGN KEY constraint failed`. The staging database now turns foreign-key enforcement off for the copy and keeps the original schema.
 - **Automatic transcripts no longer appear as tagged items.** Saving a transcript into a file's note kept a row in `_reader_tags.db` with an empty tag, so the file showed up in Tagged items, in tagged-only / tagged-files portable exports, and in reports. Only an explicit tag or a note the examiner writes counts as tagged. Existing cases are handled on read: a row that is only an automatic transcript stops counting as tagged, and the transcript text is kept.

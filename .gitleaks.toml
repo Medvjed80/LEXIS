@@ -1,0 +1,15 @@
+# Secret scanning for this repository: gitleaks dir .   and   gitleaks git .
+# Default rules apply. The allowlist below only covers false positives in files vendored unchanged from upstream
+# ALEAPP/iLEAPP (hash-like identifiers and a public test fixture); it never covers LEXIS's own sources.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Vendored ALEAPP/iLEAPP: public hash/identifier constants, manifest ids and a public test certificate key"
+paths = [
+  '''ALEAPP/admin/image_manifest\.json''',
+  '''ILEAPP/admin/image_manifest\.json''',
+  '''ALEAPP/admin/test/data/raw_images/ad-cert-test-key-2048\.pem''',
+  '''ALEAPP/scripts/artifacts/appLockerfishingnet\.py''',
+  '''ILEAPP/scripts/artifacts/Ph0\d\d[A-Za-z0-9]*\.py''',
+]

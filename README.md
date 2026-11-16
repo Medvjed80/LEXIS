@@ -1,5 +1,12 @@
 # LEXIS — LEAPP Reader
 
+> **This is a community fork of [G33KF/LEXIS](https://github.com/G33KF/LEXIS)** (upstream version 1.2.5, MIT).
+> It adds the 1.2.6/1.2.7 features, buildable ALEAPP/iLEAPP engines and a privacy hardening for GDPR use.
+> The full list of differences is in [CHANGES-FROM-UPSTREAM.md](CHANGES-FROM-UPSTREAM.md); the data-protection
+> notes are in [PRIVACY.md](PRIVACY.md) ([italiano](PRIVACY.it.md)); security reporting is in [SECURITY.md](SECURITY.md).
+> The upstream licence and copyright are kept unchanged (see [LICENSE](LICENSE) and [NOTICE](NOTICE)).
+> Not affiliated with, or endorsed by, the upstream author. **Never put real case data in issues or pull requests.**
+
 LEXIS is a Windows graphical analysis environment for **ALEAPP** (Android) and **iLEAPP** (iOS).
 LEAPP parses the extraction and reports each artifact on its own; LEXIS brings those results
 together, so you can search, correlate and tag across artifacts and across devices. Both tools
@@ -258,6 +265,8 @@ release/                      build output (ignored by git)
 ```
 
 ## Contact
+
+Upstream project contacts (not the maintainer of this fork):
 
 - E-mail: [info@gk-forensics.com](mailto:info@gk-forensics.com)
 - LinkedIn: [gkforensics](https://it.linkedin.com/in/gkforensics)
