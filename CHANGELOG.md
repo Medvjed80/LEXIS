@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 1.2.8
+
+First release of the open-source fork of upstream 1.2.5. It carries the 1.2.6 and 1.2.7 work (tagged files, transcripts, UFED/UFADE, buildable engines) and the privacy hardening under "Security and privacy" below.
 
 ### Added
 - **Buildable ALEAPP and iLEAPP engines, and a more robust plugin list.** One failing
@@ -10,7 +12,7 @@
   `ExtractionRunner` keeps the child's stderr (last ~20 lines) when a source checkout
   cannot list its plugins, and a built exe without `plugins.json` says so in the UI
   instead of showing an empty list. `build.ps1` accepts `-Python`, creates each tool's
-  `.venv` when missing, and writes `release\LEXIS-1.2.7-engines-win-x64.exe`.
+  `.venv` when missing, and writes `release\LEXIS-1.2.8-engines-win-x64.exe`.
 - **Open tagged files in their original folder.** In Tagged Items, a tagged file can be opened in Extraction
   Files on its parent folder (the path on the device), with the file selected and visible; the extraction
   tree is loaded if needed. *Open file* uses the existing viewer or preview, and *Show in Explorer* is offered
