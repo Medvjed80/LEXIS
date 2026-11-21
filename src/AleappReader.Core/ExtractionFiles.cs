@@ -117,26 +117,35 @@ public sealed class ExtractionFiles : IDisposable
 
     static ExtractionFiles OpenUfed(string input, ZipArchive zip, UfedLogical.Snapshot snap, string? password)
     {
-        var byName = new Dictionary<string, ZipArchiveEntry>(StringComparer.OrdinalIgnoreCase);
+        // Fix (UFADE parsing): the member map is case-SENSITIVE. iOS uses case-sensitive APFS, so "IMG.JPG" and
+        // "img.jpg" can both be in the zip; the former case-insensitive map kept only the first of them. A
+        // case-insensitive map is still used as a fallback, only to find a member under the name another place gives.
+        var byName = new Dictionary<string, ZipArchiveEntry>(StringComparer.Ordinal);
+        var folded = new Dictionary<string, ZipArchiveEntry>(StringComparer.OrdinalIgnoreCase);
+        var members = new List<(string Name, ZipArchiveEntry Entry)>();
         foreach (var e in zip.Entries)
         {
             var n = UfedLogical.Norm(e.FullName);
             if (n == "" || n.EndsWith('/') || n.Split('/').Contains("..")) continue;
+            members.Add((n, e));
             byName.TryAdd(n, e);
+            folded.TryAdd(n, e);
         }
+        ZipArchiveEntry? Member(string name) => byName.GetValueOrDefault(name) ?? folded.GetValueOrDefault(name);
         var index = new Dictionary<string, Entry>(StringComparer.Ordinal);
+        var mapped = new HashSet<ZipArchiveEntry>(ReferenceEqualityComparer.Instance); // backup files reached through Manifest.db
         Dictionary<int, byte[]>? keys = null;
         var locked = false;
-        if (byName.TryGetValue(snap.Prefix + "Manifest.db", out var dbEntry))
+        if (Member(snap.Prefix + "Manifest.db") is { } dbEntry)
         {
             byte[] head;
             using (var s = dbEntry.Open()) head = Head(s, 16);
             if (head.AsSpan().SequenceEqual("SQLite format 3\0"u8))
-                IndexPlainBackup(dbEntry, snap, byName, index);
+                IndexPlainBackup(dbEntry, snap, Member, index, mapped);
             else if (password is null) locked = true;
             else
             {
-                if (!byName.TryGetValue(snap.Prefix + "Manifest.plist", out var plistEntry))
+                if (Member(snap.Prefix + "Manifest.plist") is not { } plistEntry)
                     throw new InvalidDataException("The backup has no Manifest.plist.");
                 var plist = Bplist.Parse(ReadAll(plistEntry)) as Dictionary<string, object?>
                             ?? throw new InvalidDataException("Manifest.plist cannot be read.");
@@ -158,33 +167,32 @@ public sealed class ExtractionFiles : IDisposable
                             if (dst.ReadByte() is var pad and > 0 and <= 16) dst.SetLength(dst.Length - pad);
                         }
                     }
-                    IndexDecryptedBackup(tmp, snap, byName, index);
+                    IndexDecryptedBackup(tmp, snap, Member, index, mapped);
                 }
                 finally { File.Delete(tmp); }
             }
         }
-        foreach (var (name, entry) in byName)
+        // Fix (UFADE parsing): every member is accounted for. Before, every Snapshot member was skipped here, so the
+        // backup's own Info.plist, Status.plist, Manifest.plist and Manifest.db, any hashed file Manifest.db does not
+        // list, and the WHOLE backup of a locked (no password) zip were missing from the file browser and the text
+        // index. They are now listed under their path in the zip; the mapped hashed files stay behind their
+        // Domain/relativePath. Members with the same index key (a name stored twice in the zip) are all kept.
+        foreach (var (name, entry) in members)
         {
-            if (name.StartsWith(snap.Prefix, StringComparison.OrdinalIgnoreCase)) continue;
-            if (AfcPath(name) is { } media) index.TryAdd(media, new Entry(entry.Length, Zip: entry));
-            else index.TryAdd(Normalize(name), new Entry(entry.Length, Zip: entry));
+            if (mapped.Contains(entry)) continue;
+            var key = name.StartsWith(snap.Prefix, StringComparison.OrdinalIgnoreCase) ? Normalize(name) : UfedLogical.IndexKey(name);
+            index.TryAdd(UfedLogical.Unique(key, index.ContainsKey), new Entry(entry.Length, Zip: entry));
         }
         return new ExtractionFiles(input, "UFED advanced logical", zip: zip, index: index, classKeys: keys, domains: true) { Locked = locked };
     }
 
-    /// <summary><c>iPhoneDump/AFC Service/DCIM/a.jpg</c> (or <c>AFC Service/...</c>) as <c>private/var/mobile/Media/DCIM/a.jpg</c>.</summary>
-    static string? AfcPath(string name)
-    {
-        const string marker = "AFC Service/";
-        var i = name.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
-        if (i < 0) return null;
-        var head = i == 0 ? "" : name[..(i - 1)];
-        if (head.Contains('/')) return null;
-        var rest = name[(i + marker.Length)..];
-        return rest == "" ? null : "private/var/mobile/Media/" + rest;
-    }
+    /// <summary>The Domain/relativePath of a Manifest.db row; a NULL column reads as "" instead of throwing (which
+    /// made the whole extraction unreadable).</summary>
+    static string BackupKey(Microsoft.Data.Sqlite.SqliteDataReader rd) =>
+        Normalize($"{(rd.IsDBNull(1) ? "" : rd.GetString(1))}/{(rd.IsDBNull(2) ? "" : rd.GetString(2))}").TrimEnd('/');
 
-    static void IndexPlainBackup(ZipArchiveEntry dbEntry, UfedLogical.Snapshot snap, Dictionary<string, ZipArchiveEntry> byName, Dictionary<string, Entry> index)
+    static void IndexPlainBackup(ZipArchiveEntry dbEntry, UfedLogical.Snapshot snap, Func<string, ZipArchiveEntry?> member,
+                                 Dictionary<string, Entry> index, HashSet<ZipArchiveEntry> mapped)
     {
         var tmp = Path.Combine(Path.GetTempPath(), "AleappReader", "backup", Guid.NewGuid().ToString("N") + ".db");
         Directory.CreateDirectory(Path.GetDirectoryName(tmp)!);
@@ -198,15 +206,16 @@ public sealed class ExtractionFiles : IDisposable
             using var rd = cmd.ExecuteReader();
             while (rd.Read())
             {
-                var id = rd.GetString(0);
-                if (!BackupFileId(id) || !byName.TryGetValue(snap.Prefix + id[..2] + "/" + id, out var file)) continue;
-                index.TryAdd(Normalize($"{rd.GetString(1)}/{rd.GetString(2)}"), new Entry(file.Length, Zip: file));
+                var id = rd.IsDBNull(0) ? "" : rd.GetString(0);
+                if (!BackupFileId(id) || member(snap.Prefix + id[..2] + "/" + id) is not { } file) continue;
+                if (index.TryAdd(BackupKey(rd), new Entry(file.Length, Zip: file))) mapped.Add(file);
             }
         }
         finally { File.Delete(tmp); }
     }
 
-    static void IndexDecryptedBackup(string db, UfedLogical.Snapshot snap, Dictionary<string, ZipArchiveEntry> byName, Dictionary<string, Entry> index)
+    static void IndexDecryptedBackup(string db, UfedLogical.Snapshot snap, Func<string, ZipArchiveEntry?> member,
+                                     Dictionary<string, Entry> index, HashSet<ZipArchiveEntry> mapped)
     {
         using var con = CaseSession.OpenReadOnly(db);
         using var cmd = con.CreateCommand();
@@ -214,11 +223,11 @@ public sealed class ExtractionFiles : IDisposable
         using var rd = cmd.ExecuteReader();
         while (rd.Read())
         {
-            var id = rd.GetString(0);
-            if (!BackupFileId(id) || !byName.TryGetValue(snap.Prefix + id[..2] + "/" + id, out var file)) continue;
+            var id = rd.IsDBNull(0) ? "" : rd.GetString(0);
+            if (!BackupFileId(id) || member(snap.Prefix + id[..2] + "/" + id) is not { } file) continue;
             var rec = rd.IsDBNull(3) ? null : ItunesBackup.FileRecord((byte[])rd[3]);
-            index.TryAdd(Normalize($"{rd.GetString(1)}/{rd.GetString(2)}"),
-                         rec is { } r ? new Entry(r.Size, Zip: file, Key: r.Key) : new Entry(file.Length, Zip: file, Key: []));
+            if (index.TryAdd(BackupKey(rd), rec is { } r ? new Entry(r.Size, Zip: file, Key: r.Key) : new Entry(file.Length, Zip: file, Key: [])))
+                mapped.Add(file);
         }
     }
 

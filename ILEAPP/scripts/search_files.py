@@ -631,7 +631,23 @@ class FileSeekerItunes(FileSeekerBase):
         elif backup_type == "mbdb":
             manifest_path = os.path.join(directory, "Manifest.mbdb")
             self.build_files_list_from_manifest_mbdb(manifest_path)
-        logfunc(f'File listing complete - {len(self._all_files)} files')
+        # LEXIS (UFED/UFADE advanced logical): the files of the zip outside the iTunes backup (AFC Service media,
+        # shared app documents, Lockdown Service files) are staged by LEXIS under _lexis_extra/, each at the path
+        # LEXIS indexes it by (AFC Service/X as private/var/mobile/Media/X). They are listed here too, so artifacts
+        # find them; a path the backup itself has keeps the backup's file. Absent in any ordinary backup.
+        self._extra_files = {}
+        extra_root = os.path.join(directory, '_lexis_extra')
+        if os.path.isdir(extra_root):
+            in_backup = {k.replace('\\', '/') for k in self._all_files}
+            for root, _dirs, files in os.walk(extra_root):
+                for name in files:
+                    location = os.path.join(root, name)
+                    rel = os.path.relpath(location, extra_root)
+                    key = os.path.join(*rel.replace('\\', '/').split('/'))
+                    if key.replace('\\', '/') not in in_backup:
+                        self._extra_files[key] = location
+            logfunc(f'Files outside the backup (UFED/UFADE zip) - {len(self._extra_files)} files')
+        logfunc(f'File listing complete - {len(self._all_files) + len(self._extra_files)} files')
         self.searched = {}
         self.copied = {}
         self.file_infos = {}
@@ -821,6 +837,30 @@ class FileSeekerItunes(FileSeekerBase):
                     self.copied[original_location] = data_path
                 except OSError as ex:
                     logfunc(f'Could not copy {original_location} to {data_path} ' + str(ex))
+            else:
+                data_path = self.copied[original_location]
+            pathlist.append(data_path)
+            if return_on_first_hit:
+                self.searched[filepattern] = pathlist
+                return data_path
+        # LEXIS: the staged UFED/UFADE files outside the backup, copied as they are (never encrypted)
+        for relative_path in fnmatch.filter(self._extra_files, filepattern):
+            original_location = self._extra_files[relative_path]
+            if original_location not in self.copied or force:
+                data_path = os.path.join(self.data_folder, sanitize_file_path(relative_path))
+                if is_platform_windows():
+                    data_path = data_path.replace('/', '\\')
+                try:
+                    data_path = self._unique_data_path(
+                        data_path, original_location, hash_source=relative_path)
+                    os.makedirs(os.path.dirname(data_path), exist_ok=True)
+                    copy2(original_location, data_path)
+                    stat = os.stat(original_location)
+                    self.file_infos[data_path] = FileInfo(relative_path.replace('\\', '/'), 0, stat.st_mtime)
+                    self.copied[original_location] = data_path
+                except OSError as ex:
+                    logfunc(f'Could not copy {original_location} to {data_path} ' + str(ex))
+                    continue
             else:
                 data_path = self.copied[original_location]
             pathlist.append(data_path)

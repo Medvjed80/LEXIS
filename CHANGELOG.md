@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.2.9
+
+UFED/UFADE advanced logical extractions: nothing in the zip is left out any more. Checked on synthetic zips laid out as UFADE writes them.
+
+### Fixed
+- **Every member of a UFED/UFADE zip is indexed.** The backup's own `Info.plist`, `Status.plist`, `Manifest.plist` and
+  `Manifest.db`, hashed files that `Manifest.db` does not list, and the whole backup of an encrypted zip opened without
+  its password were missing from Extraction Files and the text index. They are listed under their path in the zip.
+- **Names that differ only in case, or are stored twice, are all kept.** iOS file systems are case-sensitive; the index
+  used to keep only the first of `IMG.JPG` / `img.jpg`. A name stored twice gets a `~2` suffix instead of being dropped.
+- **iLEAPP sees the files outside the iTunes backup.** AFC Service media, shared app documents and
+  `Lockdown Service/device_values.plist` are staged under `_lexis_extra/` and listed by iLEAPP's iTunes seeker
+  (the backup keeps priority on a shared path). Before, only the backup reached the artifacts.
+- **Staging no longer aborts** on a name stored twice or differing only in case on NTFS (the read-only first copy made
+  the second one fail), and an iOS name with `: ? * " < > |` is written with `_` there.
+- **A NULL domain or path in Manifest.db** no longer makes the whole extraction unreadable.
+- **The UFD summary shows the UDID, the device class and whether the backup is encrypted** (never the password).
+
 ## 1.2.8
 
 First release of the open-source fork of upstream 1.2.5. It carries the 1.2.6 and 1.2.7 work (tagged files, transcripts, UFED/UFADE, buildable engines) and the privacy hardening under "Security and privacy" below.

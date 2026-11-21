@@ -133,6 +133,11 @@ public sealed class UfdInfo
             ("Device", "DeviceInfo", "IMEI1", "IMEI 1"),
             ("Device", "DeviceInfo", "IMEI2", "IMEI 2"),
             ("Device", "DeviceInfo", "Chipset", "Chipset"),
+            // Fix (UFADE parsing): fields UFADE writes that were not shown: the UDID, the device class and whether the
+            // backup inside the zip is encrypted (the password itself is never shown)
+            ("Device", "General", "GUID", "UDID"),
+            ("Device", "General", "Device", "Device class"),
+            ("Extraction", "General", "IsEncrypted", "Encrypted backup"),
             ("Extraction", "General", "ExtractionType", "Extraction type"),
             ("Extraction", "Image", "ExtractionMethod", "Method"),
             ("Extraction", "General", "Date", "Started"),
