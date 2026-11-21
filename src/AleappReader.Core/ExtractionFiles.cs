@@ -187,7 +187,7 @@ public sealed class ExtractionFiles : IDisposable
     }
 
     /// <summary>The Domain/relativePath of a Manifest.db row; a NULL column reads as "" instead of throwing (which
-    /// made the whole extraction unreadable).</summary>
+    /// made the whole extraction unreadable). Used by the UFED/UFADE zip and by the iTunes backup folder readers.</summary>
     static string BackupKey(Microsoft.Data.Sqlite.SqliteDataReader rd) =>
         Normalize($"{(rd.IsDBNull(1) ? "" : rd.GetString(1))}/{(rd.IsDBNull(2) ? "" : rd.GetString(2))}").TrimEnd('/');
 
@@ -270,10 +270,10 @@ public sealed class ExtractionFiles : IDisposable
         using var rd = cmd.ExecuteReader();
         while (rd.Read())
         {
-            var id = rd.GetString(0);
+            var id = rd.IsDBNull(0) ? "" : rd.GetString(0); // NULL-safe, like the UFADE reader
             if (id.Length < 3 || id.Any(c => !char.IsAsciiHexDigit(c))) continue; // a file id names a file in the backup, nothing else
             var file = new FileInfo(Path.Combine(dir, id[..2], id));
-            if (file.Exists) index.TryAdd(Normalize($"{rd.GetString(1)}/{rd.GetString(2)}"), new Entry(file.Length, File: file.FullName));
+            if (file.Exists) index.TryAdd(BackupKey(rd), new Entry(file.Length, File: file.FullName));
         }
         return index;
     }
@@ -308,12 +308,12 @@ public sealed class ExtractionFiles : IDisposable
             using var rd = cmd.ExecuteReader();
             while (rd.Read())
             {
-                var id = rd.GetString(0);
+                var id = rd.IsDBNull(0) ? "" : rd.GetString(0); // NULL-safe, like the UFADE reader
                 if (id.Length < 3 || id.Any(c => !char.IsAsciiHexDigit(c))) continue;
                 var file = new FileInfo(Path.Combine(dir, id[..2], id));
                 if (!file.Exists) continue;
                 var rec = rd.IsDBNull(3) ? null : ItunesBackup.FileRecord((byte[])rd[3]);
-                index.TryAdd(Normalize($"{rd.GetString(1)}/{rd.GetString(2)}"),
+                index.TryAdd(BackupKey(rd),
                              rec is { } r ? new Entry(r.Size, File: file.FullName, Key: r.Key) : new Entry(file.Length, File: file.FullName, Key: []));
             }
             return (index, keys);

@@ -15,7 +15,8 @@ UFED/UFADE advanced logical extractions: nothing in the zip is left out any more
   (the backup keeps priority on a shared path). Before, only the backup reached the artifacts.
 - **Staging no longer aborts** on a name stored twice or differing only in case on NTFS (the read-only first copy made
   the second one fail), and an iOS name with `: ? * " < > |` is written with `_` there.
-- **A NULL domain or path in Manifest.db** no longer makes the whole extraction unreadable.
+- **A NULL domain, path or file ID in Manifest.db** no longer makes the whole extraction unreadable, in a UFED/UFADE
+  zip and in an iTunes backup folder (plain or encrypted) alike.
 - **The UFD summary shows the UDID, the device class and whether the backup is encrypted** (never the password).
 
 ## 1.2.8

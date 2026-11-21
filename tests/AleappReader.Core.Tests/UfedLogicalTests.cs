@@ -342,6 +342,38 @@ public class UfedLogicalTests : IDisposable
         Assert.DoesNotContain(sum, s => s.Value == "12345");
     }
 
+    [Fact]
+    public void An_itunes_backup_folder_with_a_NULL_domain_or_path_still_opens_and_lists_every_file()
+    {
+        var dir = Path.Combine(_c.Root, "itunes-null");
+        var (a, b, c) = (new string('1', 40), new string('2', 40), new string('3', 40));
+        foreach (var (id, text) in new[] { (a, "sms"), (b, "null-path"), (c, "null-domain") })
+        {
+            Directory.CreateDirectory(Path.Combine(dir, id[..2]));
+            File.WriteAllText(Path.Combine(dir, id[..2], id), text);
+        }
+        using (var con = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={Path.Combine(dir, "Manifest.db")};Pooling=False"))
+        {
+            con.Open();
+            using var cmd = con.CreateCommand();
+            cmd.CommandText = "CREATE TABLE Files(fileID TEXT PRIMARY KEY, domain TEXT, relativePath TEXT, flags INTEGER);" +
+                              "INSERT INTO Files VALUES($a,'HomeDomain','Library/SMS/sms.db',1);" +
+                              "INSERT INTO Files VALUES($b,'MediaDomain',NULL,1);" +
+                              "INSERT INTO Files VALUES($c,NULL,'Library/x.plist',1);" +
+                              "INSERT INTO Files VALUES(NULL,'HomeDomain','Library/none',1);";
+            cmd.Parameters.AddWithValue("$a", a);
+            cmd.Parameters.AddWithValue("$b", b);
+            cmd.Parameters.AddWithValue("$c", c);
+            cmd.ExecuteNonQuery();
+        }
+        using var x = ExtractionFiles.Open(dir)!; // before: a NULL column threw and the backup did not open at all
+        Assert.Equal("iTunes backup", x.Kind);
+        Assert.Equal(3, x.Files().Count);
+        Assert.Equal("sms", x.Read("HomeDomain/Library/SMS/sms.db", s => new StreamReader(s).ReadToEnd()));
+        Assert.Equal("null-path", x.Read("MediaDomain", s => new StreamReader(s).ReadToEnd()));
+        Assert.Equal("null-domain", x.Read("Library/x.plist", s => new StreamReader(s).ReadToEnd()));
+    }
+
     static void Add(ZipArchive zip, string name, string text)
     {
         var e = zip.CreateEntry(name.Replace('\\', '/'));
