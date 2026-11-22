@@ -29,7 +29,7 @@ public sealed class AiProviderSetting
 
     static readonly byte[] Entropy = "LEXIS AI endpoint key"u8.ToArray();
 
-    public AiClient Client() => new(Provider, Key());
+    public AiClient Client() => new(Provider, Key()) { MaxContext = Settings.Current.Ai.MaxContext is > 0 and var m ? m : null };
 }
 
 /// <summary>Whether AI is on, and which jobs have a model, for the AI buttons and menus to bind to
@@ -118,6 +118,9 @@ public sealed class AiSettings
     /// <summary>Requests sent to the model at once, for the jobs whose requests are independent (images, audio, the
     /// thematic review, Explain, questions). 1: one after the other.</summary>
     public int ParallelRequests { get; set; } = 1;
+    /// <summary>The most context (num_ctx) asked of Ollama, whatever the model advertises; 0: no cap. 16,384 tokens keeps
+    /// a mid-size model inside an 8 GB graphics card.</summary>
+    public int MaxContext { get; set; } = AiClient.DefaultMaxContext;
     public string VisionCategories { get; set; } =
         "weapons, drugs, identity documents, cash or payment cards, screenshots, vehicles, people, documents, other";
     public List<AiTheme> Themes { get; set; } =

@@ -167,7 +167,7 @@
                 </ItemsControl>
                 <Grid Margin="0,4,0,0">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="300"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-                    <Grid.RowDefinitions><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
+                    <Grid.RowDefinitions><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
                     <TextBlock Grid.Row="3" Text="Records per request (most)" VerticalAlignment="Center"/>
                     <TextBox Grid.Row="3" Grid.Column="1" Margin="6,4,0,0" Width="80" HorizontalAlignment="Left" VerticalContentAlignment="Center"
                              Text="{Binding MaxRecordsPerRequest, UpdateSourceTrigger=PropertyChanged}"
@@ -176,6 +176,10 @@
                     <TextBox Grid.Row="4" Grid.Column="1" Margin="6,4,0,0" Width="80" HorizontalAlignment="Left" VerticalContentAlignment="Center"
                              Text="{Binding ParallelRequests, UpdateSourceTrigger=PropertyChanged}"
                              ToolTip="Requests sent to the model at once (1: one after the other). For images, audio, the thematic review, Explain and questions; summaries and translations go in order, each step carrying the one before. More only if the server runs them in parallel (LM Studio: Max concurrent predictions; Ollama: OLLAMA_NUM_PARALLEL)."/>
+                    <TextBlock Grid.Row="5" Text="Max context (num_ctx)" VerticalAlignment="Center"/>
+                    <TextBox Grid.Row="5" Grid.Column="1" Margin="6,4,0,0" Width="80" HorizontalAlignment="Left" VerticalContentAlignment="Center"
+                             Text="{Binding MaxContext, UpdateSourceTrigger=PropertyChanged}"
+                             ToolTip="Ollama: the most context (tokens) LEXIS asks for, whatever the model advertises. A large context fills the graphics card's memory and pushes the model onto the CPU. 16384 suits an 8 GB card; 0: no cap (the model's own context). Requests are split in smaller steps to fit."/>
                     <TextBlock Text="Answer in" VerticalAlignment="Center"/>
                     <TextBox Grid.Column="1" Margin="6,0,0,4" Text="{Binding AnswerLanguage, UpdateSourceTrigger=PropertyChanged}" VerticalContentAlignment="Center"
                              ToolTip="Language of summaries, answers and reasons; the records' own words are quoted as they are"/>

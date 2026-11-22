@@ -142,6 +142,10 @@ public partial class AiViewModel : ObservableObject
         {
             Status = "Failed: " + e.Message;
         }
+        catch (ObjectDisposedException) // the case or its extraction was closed while the job read a file
+        {
+            Status = "Stopped: the case or its extraction was closed while files were being read. Open it again and retry.";
+        }
         finally
         {
             Busy = false;
@@ -833,5 +837,98 @@ public partial class AiViewModel : ObservableObject
         if (Selected is not { } r) return;
         Clipboard.SetText($"{r.Label}\n{Caveat}\nPrompt: {r.Prompt}\nScope: {r.Scope}\n\n{r.Output}" +
                           (r.Unknown.Count > 0 ? $"\n\nCitations not among the records sent: {string.Join(" ", r.Unknown)}" : ""));
+    }
+
+    // ---- deleting transcriptions (Results tab: one, several with Ctrl/Shift, or all) ----
+
+    public const string TranscriptionKind = "Transcription";
+
+    /// <summary>The transcriptions among the results selected in the list (a non-transcription selected is left alone).</summary>
+    static List<AiResult> TranscriptionsIn(object? selected) =>
+        (selected is System.Collections.IList list ? list.OfType<AiResult>() : selected is AiResult one ? [one] : [])
+            .Where(r => r.Kind == TranscriptionKind).DistinctBy(r => r.Id).ToList();
+
+    /// <summary>Deletes the selected transcriptions (Delete key, context menu, button), after a confirmation with their count.</summary>
+    [RelayCommand]
+    Task DeleteTranscriptions(object? selected)
+    {
+        var picked = TranscriptionsIn(selected);
+        if (picked.Count == 0)
+        {
+            Status = "Select one or more transcriptions first (click, Ctrl+click, Shift+click). Other AI results cannot be deleted.";
+            return Task.CompletedTask;
+        }
+        var others = (selected as System.Collections.IList)?.OfType<AiResult>().Count(r => r.Kind != TranscriptionKind) ?? 0;
+        return DeleteTranscriptionIds([.. picked.Select(r => r.Id)],
+            $"Delete {picked.Count:N0} selected transcription{(picked.Count == 1 ? "" : "s")}?" +
+            (others > 0 ? $"\n\n{others:N0} other selected result{(others == 1 ? " is" : "s are")} not a transcription and will be kept." : ""));
+    }
+
+    /// <summary>Deletes every transcription of this case's AI base, after a confirmation with their count.</summary>
+    [RelayCommand]
+    async Task DeleteAllTranscriptions()
+    {
+        var all = await Task.Run(() => _store.Transcriptions());
+        if (all.Count == 0) { Status = "There are no transcriptions to delete."; return; }
+        await DeleteTranscriptionIds([.. all.Select(r => r.Id)], $"Delete all {all.Count:N0} transcription{(all.Count == 1 ? "" : "s")} of this case?");
+    }
+
+    async Task DeleteTranscriptionIds(IReadOnlyCollection<long> ids, string question)
+    {
+        if (Busy) { Status = "Wait for the running AI job to finish, or stop it, before deleting transcriptions."; return; }
+        if (MessageBox.Show(Application.Current.MainWindow,
+                question + "\n\nThe transcripts are removed from the AI base and from the files' notes (what you wrote in a note is kept). " +
+                "The send log keeps the record of what was sent, and the deletion is logged. The files can be transcribed again later.\n\nThis cannot be undone.",
+                "Delete transcriptions", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes) return;
+        Busy = true;
+        Status = "Deleting transcriptions…";
+        try
+        {
+            var (deleted, notes) = await Task.Run(() => TranscriptNotes.Delete(_s.Tags, _store, ids, MediaByRef(ids)));
+            Status = deleted == 0 ? "Nothing deleted: those transcriptions were already gone."
+                : $"{deleted:N0} transcription{(deleted == 1 ? "" : "s")} deleted" + (notes > 0 ? $", {notes:N0} file note{(notes == 1 ? "" : "s")} updated." : ".");
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or Microsoft.Data.Sqlite.SqliteException or InvalidOperationException)
+        {
+            Status = "The transcriptions could not be deleted: " + e.Message;
+        }
+        finally
+        {
+            Busy = false;
+            Selected = null;
+            Reload();
+            _main.RefreshAiViews(); // notes, details pane, chats, Tagged items, the AI analysis columns
+        }
+    }
+
+    /// <summary>The files the transcriptions cite, by media id: those the report links, and those of the extraction (their
+    /// id is a hash of their path). Off the UI thread.</summary>
+    Dictionary<string, MediaRef> MediaByRef(IReadOnlyCollection<long> ids)
+    {
+        var map = new Dictionary<string, MediaRef>(StringComparer.Ordinal);
+        foreach (var m in _scope.Media) map.TryAdd(m.RefId, m);
+        try
+        {
+            using var con = _s.OpenDb();
+            foreach (var m in new MediaResolver(_s).All(con, int.MaxValue)) map.TryAdd(m.RefId, m);
+        }
+        catch (Microsoft.Data.Sqlite.SqliteException) { }
+        var wanted = ids.ToHashSet();
+        var extraction = _store.Transcriptions().Where(r => wanted.Contains(r.Id)).SelectMany(r => r.Cited)
+            .Where(c => c.StartsWith("[media#" + ExtractionFiles.RefPrefix, StringComparison.Ordinal) && c.EndsWith(']'))
+            .Select(c => c["[media#".Length..^1]).Where(id => !map.ContainsKey(id)).ToHashSet(StringComparer.Ordinal);
+        if (extraction.Count == 0) return map;
+        try
+        {
+            if (_s.Extraction is { IsDisposed: false } x)
+                foreach (var rel in x.Media)
+                    if (x.ToMedia(rel) is var m && extraction.Remove(m.RefId))
+                    {
+                        map[m.RefId] = m;
+                        if (extraction.Count == 0) break;
+                    }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException or ObjectDisposedException) { }
+        return map;
     }
 }

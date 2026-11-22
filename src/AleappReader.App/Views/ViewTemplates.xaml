@@ -1343,6 +1343,26 @@
                             <DatePicker SelectedDate="{Binding To}" Width="115" ToolTip="To this day, included"/>
                         </StackPanel>
                     </StackPanel>
+                    <StackPanel Margin="0,0,10,0">
+                        <TextBlock Style="{StaticResource FilterCaption}" Text="Size"/>
+                        <StackPanel Orientation="Horizontal">
+                            <ComboBox ItemsSource="{Binding SizePresets}" SelectedItem="{Binding SizePreset}" Width="125"
+                                      ToolTip="Keep files of this size only (1 KB = 1,024 bytes; the lower bound is included, the upper one left out). Custom range: type a minimum and/or a maximum. Unknown size only: files whose size cannot be read (not in the case or the extraction). Combines with the other filters."/>
+                            <StackPanel Orientation="Horizontal" Visibility="{Binding IsCustomSize, Converter={StaticResource Vis}}">
+                                <TextBox Text="{Binding SizeMin, UpdateSourceTrigger=PropertyChanged, Delay=400}" Width="55" Margin="4,0,0,0" VerticalContentAlignment="Center"
+                                         ToolTip="Minimum size, included (blank: no minimum). Decimals allowed: 1.5"/>
+                                <TextBlock Text="–" VerticalAlignment="Center" Margin="3,0"/>
+                                <TextBox Text="{Binding SizeMax, UpdateSourceTrigger=PropertyChanged, Delay=400}" Width="55" VerticalContentAlignment="Center"
+                                         ToolTip="Maximum size, included (blank: no maximum)"/>
+                                <ComboBox ItemsSource="{Binding SizeUnits}" SelectedItem="{Binding SizeUnit}" Width="52" Margin="4,0,0,0" ToolTip="Unit of the minimum and maximum"/>
+                            </StackPanel>
+                            <CheckBox Content="Unknown too" IsChecked="{Binding KeepUnknownSize}" VerticalAlignment="Center" Margin="6,0,0,0"
+                                      ToolTip="Also keep the files whose size is not known while a size filter is set"/>
+                            <Button Style="{StaticResource FlatButton}" Command="{Binding ClearSizeCommand}" Margin="4,0,0,0" ToolTip="Clear the size filter">
+                                <TextBlock Style="{StaticResource Icon}" Text="&#xE711;" FontSize="10"/>
+                            </Button>
+                        </StackPanel>
+                    </StackPanel>
                     <TextBox Style="{StaticResource SearchBox}" MinWidth="180" Text="{Binding Filter, UpdateSourceTrigger=PropertyChanged}" ToolTip="Filter by name, artifact, path, chat or sender (Enter)" VerticalAlignment="Bottom">
                         <TextBox.InputBindings><KeyBinding Key="Enter" Command="{Binding ApplyFilterCommand}"/></TextBox.InputBindings>
                     </TextBox>

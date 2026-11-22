@@ -100,7 +100,32 @@
                         <Grid.ColumnDefinitions><ColumnDefinition Width="260"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                         <DockPanel>
                         <ComboBox DockPanel.Dock="Top" ItemsSource="{Binding Kinds}" SelectedItem="{Binding KindFilter}" Margin="0,0,0,4" ToolTip="Show one kind of result only"/>
-                        <ListBox ItemsSource="{Binding Results}" SelectedItem="{Binding Selected}">
+                        <WrapPanel DockPanel.Dock="Bottom" Margin="0,4,0,0">
+                            <Button Style="{StaticResource FlatButton}" Command="{Binding DeleteTranscriptionsCommand}" CommandParameter="{Binding SelectedItems, ElementName=ResultsList}" Margin="0,0,4,0"
+                                    ToolTip="Delete the selected transcriptions (Delete key). Click, Ctrl+click or Shift+click to select several; other kinds of result are kept.">
+                                <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Icon}" Text="&#xE74D;"/><TextBlock Text=" Delete selected"/></StackPanel>
+                            </Button>
+                            <Button Style="{StaticResource FlatButton}" Command="{Binding DeleteAllTranscriptionsCommand}"
+                                    ToolTip="Delete every transcription of this case, after a confirmation with their count">
+                                <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Icon}" Text="&#xE74D;"/><TextBlock Text=" Delete all transcriptions"/></StackPanel>
+                            </Button>
+                        </WrapPanel>
+                        <ListBox x:Name="ResultsList" ItemsSource="{Binding Results}" SelectedItem="{Binding Selected}" SelectionMode="Extended"
+                                 ToolTip="Click, Ctrl+click or Shift+click to select. Delete: delete the selected transcriptions. Right-click for more.">
+                            <ListBox.InputBindings>
+                                <KeyBinding Key="Delete" Command="{Binding DeleteTranscriptionsCommand}" CommandParameter="{Binding SelectedItems, ElementName=ResultsList}"/>
+                                <KeyBinding Key="A" Modifiers="Control" Command="ApplicationCommands.SelectAll"/>
+                            </ListBox.InputBindings>
+                            <ListBox.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="Delete selected transcriptions" InputGestureText="Del" Command="{Binding DeleteTranscriptionsCommand}"
+                                              CommandParameter="{Binding PlacementTarget.SelectedItems, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                                    <MenuItem Header="Delete all transcriptions…" Command="{Binding DeleteAllTranscriptionsCommand}"/>
+                                    <Separator/>
+                                    <MenuItem Header="Select all" InputGestureText="Ctrl+A" Command="ApplicationCommands.SelectAll"
+                                              CommandTarget="{Binding PlacementTarget, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                                </ContextMenu>
+                            </ListBox.ContextMenu>
                             <ListBox.ItemTemplate>
                                 <DataTemplate>
                                     <StackPanel Margin="0,2">

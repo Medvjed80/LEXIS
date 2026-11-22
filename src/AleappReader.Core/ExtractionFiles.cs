@@ -30,7 +30,12 @@ public sealed class ExtractionFiles : IDisposable
     readonly Dictionary<string, Entry> _entries = new(StringComparer.Ordinal); // every file: Android paths are case-sensitive
     readonly ILookup<string, string> _byName;
     readonly string _cache;
-    readonly Lock _lock = new(); // ZipArchive is not thread-safe
+    readonly Lock _lock = new(); // ZipArchive is not thread-safe; Dispose takes it too, so no read meets a closed zip
+    bool _disposed;
+
+    /// <summary>Whether the extraction was closed (the case closed or the extraction located again) while a view still
+    /// held it. Reading a zip-backed file then throws <see cref="ExtractionClosedException"/>.</summary>
+    public bool IsDisposed { get { lock (_lock) return _disposed; } }
 
     /// <summary>Media files, as paths relative to the extraction root with '/' separators.</summary>
     public IReadOnlyList<string> Media { get; }
@@ -376,7 +381,7 @@ public sealed class ExtractionFiles : IDisposable
     public T? Read<T>(string rel, Func<Stream, T> use)
     {
         try { return Open(rel, use); }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException or FormatException) { return default; }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException or FormatException or ObjectDisposedException) { return default; }
     }
 
     /// <summary>The index key for <paramref name="rel"/>: itself, or for an iTunes backup the Domain/relativePath of a
@@ -424,10 +429,16 @@ public sealed class ExtractionFiles : IDisposable
         if (e.Zip is not null)
             lock (_lock)
             {
-                using var z = e.Zip.Open();
-                if (e.Key is null) return use(z);
-                using var plain = ItunesBackup.Decrypt(z, ItunesBackup.UnwrapClassed(_classKeys!, e.Key), e.Size);
-                return use(plain);
+                if (_disposed) throw new ExtractionClosedException(rel);
+                Stream z;
+                try { z = e.Zip.Open(); }
+                catch (ObjectDisposedException x) { throw new ExtractionClosedException(rel, x); } // the zip closed under us
+                using (z)
+                {
+                    if (e.Key is null) return use(z);
+                    using var plain = ItunesBackup.Decrypt(z, ItunesBackup.UnwrapClassed(_classKeys!, e.Key), e.Size);
+                    return use(plain);
+                }
             }
         if (e.File is not null)
         {
@@ -457,7 +468,7 @@ public sealed class ExtractionFiles : IDisposable
         {
             ct.ThrowIfCancellationRequested();
             try { Open(rel, s => { use(rel, s); return 0; }); }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException or FormatException) { failed?.Invoke(rel); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException or FormatException or ObjectDisposedException) { failed?.Invoke(rel); }
         }
         if (!_gz) return;
         var left = all.Except(oneByOne).ToHashSet(StringComparer.Ordinal);
@@ -515,7 +526,8 @@ public sealed class ExtractionFiles : IDisposable
             File.SetAttributes(target, FileAttributes.ReadOnly);
             return target;
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException or FormatException) { return null; }
+        // ObjectDisposedException: the extraction was closed while the copy was asked for (case closed, extraction located again)
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException or FormatException or ObjectDisposedException) { return null; }
         finally { try { File.Delete(tmp); } catch (Exception e) when (e is IOException or UnauthorizedAccessException) { } }
     }
 
@@ -618,7 +630,7 @@ public sealed class ExtractionFiles : IDisposable
                     break;
             }
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException or FormatException) { }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException or FormatException or ObjectDisposedException) { }
         lock (_inside)
         {
             if (list.Count > 0) _archives.Add(rel);
@@ -665,7 +677,17 @@ public sealed class ExtractionFiles : IDisposable
     public MediaRef ToMedia(string rel, string? copied = null) =>
         new(RefPrefix + Hash(rel), Path.GetFileName(rel), null, rel, null, copied, "", EvidenceOrigin.DevicePath(Path.GetDirectoryName(rel)));
 
-    public void Dispose() => _zip?.Dispose();
+    /// <summary>Closes the zip under the same lock as <see cref="Open{T}"/>: a read in progress finishes first, a later
+    /// one gets <see cref="ExtractionClosedException"/> instead of the zip's ObjectDisposedException.</summary>
+    public void Dispose()
+    {
+        lock (_lock)
+        {
+            if (_disposed) return;
+            _disposed = true;
+            _zip?.Dispose();
+        }
+    }
 
     /// <summary>A read-only window on a tar member's bytes; owns the file stream it reads.</summary>
     sealed class Slice(Stream inner, long start, long length) : Stream
@@ -692,3 +714,9 @@ public sealed class ExtractionFiles : IDisposable
         protected override void Dispose(bool disposing) { if (disposing) inner.Dispose(); base.Dispose(disposing); }
     }
 }
+
+/// <summary>A file asked of an extraction that has been closed (the case was closed, or the extraction located or
+/// unlocked again, while a view still held the old one). An IOException, so every reader that already skips an
+/// unreadable file skips it too, instead of the zip's ObjectDisposedException reaching the dispatcher.</summary>
+public sealed class ExtractionClosedException(string rel, Exception? inner = null)
+    : IOException($"The extraction was closed before \"{rel}\" could be read. Open the view again.", inner);

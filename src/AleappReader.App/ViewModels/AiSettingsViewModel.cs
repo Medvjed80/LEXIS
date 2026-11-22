@@ -161,6 +161,7 @@ public partial class AiSettingsViewModel : ObservableObject
     [ObservableProperty] private string visionCategories;
     [ObservableProperty] private int maxRecordsPerRequest;
     [ObservableProperty] private int parallelRequests;
+    [ObservableProperty] private int maxContext;
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(VideoBySeconds))] private bool videoByPercent;
     public bool VideoBySeconds { get => !VideoByPercent; set => VideoByPercent = !value; }
     [ObservableProperty] private int videoPercent;
@@ -245,6 +246,7 @@ public partial class AiSettingsViewModel : ObservableObject
             (s.VideoByPercent, s.VideoPercent, s.VideoSeconds, s.VideoMaxFrames, s.VideoTranscribe, s.AutoTranscribeNotes);
         foreach (var t in s.Themes) Themes.Add(new AiThemeRow { Name = t.Name, Indicators = t.Indicators });
         parallelRequests = s.ParallelRequests;
+        maxContext = s.MaxContext;
         (claudePath, mcpAllowed, translateTo, answerLanguage, visionCategories, maxRecordsPerRequest) =
             (s.ClaudePath, s.McpAllowed, s.TranslateTo, s.AnswerLanguage, s.VisionCategories, s.MaxRecordsPerRequest);
         (explainWebLookup, webSearchUrl) = (s.ExplainWebLookup, s.WebSearchUrl);
@@ -370,6 +372,7 @@ public partial class AiSettingsViewModel : ObservableObject
         ai.AnswerLanguage = AnswerLanguage.Trim() is { Length: > 0 } al ? al : "English";
         ai.MaxRecordsPerRequest = Math.Clamp(MaxRecordsPerRequest, 1, 1000);
         ai.ParallelRequests = Math.Clamp(ParallelRequests, 1, 64);
+        ai.MaxContext = MaxContext <= 0 ? 0 : Math.Clamp(MaxContext, 2048, 1_048_576);
         ai.VisionCategories = VisionCategories.Trim();
         ai.Themes = [.. Themes.Where(t => t.Name.Trim() != "").Select(t => new AiTheme { Name = t.Name.Trim(), Indicators = t.Indicators.Trim() })];
         Settings.Current.Save(ai: true);

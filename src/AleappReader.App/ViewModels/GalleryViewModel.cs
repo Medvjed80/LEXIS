@@ -34,8 +34,10 @@ public partial class GalleryItem(MediaRef media, IReadOnlyList<MediaUse> uses, b
     public long? Epoch => Use?.Epoch ?? Media.Modified ?? Media.Created;
     public string Caption => Use is { } u ? string.Join(" · ", new[] { u.Direction, u.Sender, Uses.Count > 1 ? $"{Uses.Count} messages" : "" }.Where(x => x != ""))
         : Media.Artifact;
+    /// <summary>The file's size in bytes; -1 when not known (not reachable in the case or the extraction).</summary>
+    public long Size { get; init; } = -1;
     public string Tip => string.Join("\n", new[] { Media.SourcePath, Use is { } u ? $"{u.Artifact.Name} · {u.Chat}" : null,
-        Epoch is { } e ? ValueFormatter.Format(e, new ColumnInfo("t", "t", "datetime")) : null }.Where(x => !string.IsNullOrEmpty(x)));
+        Epoch is { } e ? ValueFormatter.Format(e, new ColumnInfo("t", "t", "datetime")) : null, MediaSizeFilter.Format(Size) }.Where(x => !string.IsNullOrEmpty(x)));
     public bool IsVideo => Media.Kind == "video";
     public string Glyph =>Media.Kind switch { "video" => "", "audio" => "", "image" => "", _ => "" };
 }
@@ -92,6 +94,31 @@ public partial class GalleryViewModel : ObservableObject
         SystemFiles => MediaOrigin.IsSystem(e.Path),
         _ => true,
     };
+    /// <summary>Each file's size by media id, read once when the gallery loads (-1: unknown).</summary>
+    Dictionary<string, long> _sizes = new(StringComparer.Ordinal);
+    public string[] SizePresets => MediaSizeFilter.Presets;
+    public string[] SizeUnits => MediaSizeFilter.Units;
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(IsCustomSize))] private string sizePreset = MediaSizeFilter.Any;
+    [ObservableProperty] private string sizeMin = "";
+    [ObservableProperty] private string sizeMax = "";
+    [ObservableProperty] private string sizeUnit = "MB";
+    [ObservableProperty] private bool keepUnknownSize;
+    public bool IsCustomSize => SizePreset == MediaSizeFilter.Custom;
+    MediaSizeFilter SizeFilter => new(SizePreset, SizeMin, SizeMax, SizeUnit, KeepUnknownSize);
+    long SizeOf(MediaRef m) => _sizes.TryGetValue(m.RefId, out var n) ? n : -1;
+
+    /// <summary>A file's size: from the case copy, else from the extraction's index; -1 when neither has it.</summary>
+    static long ReadSize(MediaRef m, ExtractionFiles? x)
+    {
+        try
+        {
+            if (m.Exists) return m.Size;
+            if (x is not null && m.SourcePath is { } p) return x.SizeOf(p);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException or ObjectDisposedException) { }
+        return -1;
+    }
+
     [ObservableProperty] private DateTime? from;
     [ObservableProperty] private DateTime? to;
     public const string ReportSource = "Linked to records", ExtractionSource = "Whole extraction";
@@ -158,8 +185,17 @@ public partial class GalleryViewModel : ObservableObject
                         all[i] = all[i] with { Item6 = g.Where(j => j != i).SelectMany(j => all[j].Item2).Except(all[i].Item2).Distinct().Order(byDate).ToList() };
             return all;
         });
+        var sizes = await Task.Run(() =>
+        {
+            ExtractionFiles? x = null;
+            try { x = _s.Extraction; } catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException) { }
+            var d = new Dictionary<string, long>(StringComparer.Ordinal);
+            foreach (var e in all) d.TryAdd(e.Item1.RefId, ReadSize(e.Item1, x));
+            return d;
+        });
         if (my != _load) return;
         _all = all;
+        _sizes = sizes;
         Apps = AppsView(_all.Where(e => e.App != "").DistinctBy(e => e.App).OrderBy(e => !e.Known).ThenBy(e => e.App, StringComparer.OrdinalIgnoreCase)
             .Select(e => new AppChoice(e.App, e.Known ? "Apps" : "Others")));
         App = AllApps;
@@ -178,8 +214,9 @@ public partial class GalleryViewModel : ObservableObject
     {
         var query = SearchQuery.Parse(Filter);
         var (lo, hi) = ValueFormatter.Days(From, To); // the day after a change of summer time has its own offset
-        return _all.Where(e => (App == AllApps || e.App == App) && OfOrigin(e))
-            .Select(e => new GalleryItem(e.M, e.U, !_unchecked.Contains(e.M), OnCheck) { AppName = e.App, Tag = TagOf(e.M, e.U), Copies = e.C }).Where(i =>
+        var size = SizeFilter;
+        return _all.Where(e => (App == AllApps || e.App == App) && OfOrigin(e) && size.Matches(SizeOf(e.M)))
+            .Select(e => new GalleryItem(e.M, e.U, !_unchecked.Contains(e.M), OnCheck) { AppName = e.App, Tag = TagOf(e.M, e.U), Copies = e.C, Size = SizeOf(e.M) }).Where(i =>
             (Kind == "all" || i.Media.Kind == Kind) &&
             (lo is null && hi is null || i.Epoch is { } ep && ep >= (lo ?? long.MinValue) && ep <= (hi ?? long.MaxValue)) &&
             (query.IsEmpty || query.Matches([i.Media.Name, i.Media.Artifact, i.Media.SourcePath, .. i.Uses.SelectMany(u => new[] { u.Chat, u.Sender })])));
@@ -331,6 +368,11 @@ public partial class GalleryViewModel : ObservableObject
         ApplyFilter();
     }
     partial void OnFromChanged(DateTime? value) => ApplyFilter();
+    partial void OnSizePresetChanged(string value) => ApplyFilter();
+    partial void OnSizeUnitChanged(string value) { if (IsCustomSize) ApplyFilter(); }
+    partial void OnKeepUnknownSizeChanged(bool value) => ApplyFilter();
+    partial void OnSizeMinChanged(string value) { if (IsCustomSize) ApplyFilter(); }
+    partial void OnSizeMaxChanged(string value) { if (IsCustomSize) ApplyFilter(); }
     partial void OnToChanged(DateTime? value) => ApplyFilter();
     async partial void OnSelectedChanged(GalleryItem? value)
     {
@@ -354,6 +396,13 @@ public partial class GalleryViewModel : ObservableObject
 
     [RelayCommand]
     void ApplyFilter() { Page = 0; Show(); }
+
+    string SizeText() => SizePreset == MediaSizeFilter.Custom
+        ? $"size {(SizeMin.Trim() == "" ? "0" : SizeMin.Trim())}–{(SizeMax.Trim() == "" ? "∞" : SizeMax.Trim())} {SizeUnit}" : SizePreset;
+
+    /// <summary>Back to every size.</summary>
+    [RelayCommand]
+    void ClearSize() { SizeMin = SizeMax = ""; KeepUnknownSize = false; SizePreset = MediaSizeFilter.Any; }
 
     public CaseSession Session => _s;
     /// <summary>Every file is checked at first: what is kept is the files unchecked.</summary>
@@ -393,16 +442,49 @@ public partial class GalleryViewModel : ObservableObject
         var chosen = Filtered().Where(i => i.IsChecked).Select(i => i.Media).ToList();
         if (chosen.Count == 0) { _main.Status = "Nothing checked: check the files first"; return null; }
         var media = await Readable(chosen);
-        return new AiScope($"{media.Count:N0} {(_unchecked.Count > 0 ? "checked " : "")}media files of the gallery ({Kind}, {App}, {Direction})", [], media);
+        return new AiScope($"{media.Count:N0} {(_unchecked.Count > 0 ? "checked " : "")}media files of the gallery ({Kind}, {App}, {Direction}{(SizeFilter.IsActive ? ", " + SizeText() : "")})", [], media);
     }
 
     /// <summary>Files chosen one by one, those only in the extraction copied out (read-only, temp folder) for the AI.</summary>
+    /// A file that cannot be copied (the extraction was closed meanwhile: case closed, extraction located again) is
+    /// passed on as it was, so the AI leaves it out instead of the gallery crashing.
     public async Task<List<MediaRef>> Readable(IEnumerable<MediaRef> media)
     {
         var list = media.ToList();
-        if (_s.Extraction is not { } x) return list;
-        return await Task.Run(() => list.Select(m => !m.Exists && ExtractionFiles.IsExtraction(m) && m.SourcePath is { } p && x.CopyOut(p) is { } copy
-            ? x.ToMedia(p, copy) with { AudioFolders = m.AudioFolders ?? SilkAudio.Folders(_s) } : m).ToList());
+        ExtractionFiles? x;
+        try { x = _s.Extraction; }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException or ObjectDisposedException) { return list; }
+        if (x is null) return list;
+        var skipped = 0;
+        var result = await Task.Run(() => list.Select(m =>
+        {
+            if (m.Exists || !ExtractionFiles.IsExtraction(m) || m.SourcePath is not { } p) return m;
+            try
+            {
+                if (x.CopyOut(p) is { } copy) return x.ToMedia(p, copy) with { AudioFolders = m.AudioFolders ?? SilkAudio.Folders(_s) };
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException or ObjectDisposedException) { }
+            Interlocked.Increment(ref skipped);
+            return m;
+        }).ToList());
+        if (skipped > 0)
+            _main.Status = x.IsDisposed
+                ? $"{skipped:N0} file{(skipped == 1 ? "" : "s")} skipped: the extraction was closed meanwhile. Open the gallery again to include them."
+                : $"{skipped:N0} file{(skipped == 1 ? "" : "s")} could not be read from the extraction and {(skipped == 1 ? "is" : "are")} left out.";
+        return result;
+    }
+
+    /// <summary>Runs a gallery AI command; a file or extraction that went away meanwhile ends it with a message in the
+    /// status bar, never an unhandled exception on the dispatcher.</summary>
+    async Task Guarded(Func<Task> run)
+    {
+        try { await run(); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException or ObjectDisposedException)
+        {
+            _main.Status = e is ObjectDisposedException or ExtractionClosedException
+                ? "The extraction was closed while the files were being read. Open the gallery again and retry."
+                : "The files could not be read: " + e.Message;
+        }
     }
 
     /// <summary>The tiles the examiner selected (the list passed from the view, else the current tile).</summary>
@@ -415,7 +497,9 @@ public partial class GalleryViewModel : ObservableObject
 
     /// <summary>Opens the AI window on the selected files only, not on every file left checked.</summary>
     [RelayCommand]
-    async Task AnalyzeSelection(object? selected)
+    Task AnalyzeSelection(object? selected) => Guarded(() => AnalyzeSelectionCore(selected));
+
+    async Task AnalyzeSelectionCore(object? selected)
     {
         var items = Chosen(selected);
         if (items.Count == 0) { _main.Status = "Select one or more files first."; return; }
@@ -425,12 +509,14 @@ public partial class GalleryViewModel : ObservableObject
         _main.OpenAi(_s, new AiScope($"{media.Count:N0} selected media file{(media.Count == 1 ? "" : "s")} of the gallery", [], media));
     }
 
-    [RelayCommand] async Task Ai() { if (await Scope() is { } sc) _main.OpenAi(_s, sc); }
-    [RelayCommand] async Task Describe() { if (await Scope() is { } sc && _main.OpenAi(_s, sc) is { } vm) _ = vm.DescribeImagesCommand.ExecuteAsync(null); }
+    [RelayCommand] Task Ai() => Guarded(async () => { if (await Scope() is { } sc) _main.OpenAi(_s, sc); });
+    [RelayCommand] Task Describe() => Guarded(async () => { if (await Scope() is { } sc && _main.OpenAi(_s, sc) is { } vm) _ = vm.DescribeImagesCommand.ExecuteAsync(null); });
 
     /// <summary>Selected tiles when some are selected; otherwise the checked files (the older Transcribe button).</summary>
     [RelayCommand]
-    async Task Transcribe(object? selected)
+    Task Transcribe(object? selected) => Guarded(() => TranscribeCore(selected));
+
+    async Task TranscribeCore(object? selected)
     {
         var picked = selected is System.Collections.IList list ? list.OfType<GalleryItem>().ToList() : [];
         if (picked.Count > 0) { await TranscribeMedia(picked.Select(i => i.Media), "the selected files"); return; }
@@ -439,16 +525,16 @@ public partial class GalleryViewModel : ObservableObject
 
     /// <summary>Audio among the tiles selected in the gallery.</summary>
     [RelayCommand]
-    async Task TranscribeSelected(object? selected)
+    Task TranscribeSelected(object? selected) => Guarded(async () =>
     {
         var items = selected is System.Collections.IList list ? list.OfType<GalleryItem>().ToList() : [];
         if (items.Count == 0) { _main.Status = "Select one or more files first."; return; }
         await TranscribeMedia(items.Select(i => i.Media), "the selected files");
-    }
+    });
 
     /// <summary>Every audio file the gallery's filters keep, checked or not.</summary>
     [RelayCommand]
-    async Task TranscribeAll() => await TranscribeMedia(Filtered().Where(i => i.Media.Kind == "audio").Select(i => i.Media), "the gallery");
+    Task TranscribeAll() => Guarded(() => TranscribeMedia(Filtered().Where(i => i.Media.Kind == "audio").Select(i => i.Media), "the gallery"));
 
     async Task TranscribeMedia(IEnumerable<MediaRef> media, string what)
     {

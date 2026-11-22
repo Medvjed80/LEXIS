@@ -134,6 +134,79 @@ public static class TranscriptNotes
         return changed;
     }
 
+    /// <summary>
+    /// Deletes these transcriptions from the AI base (<see cref="AiStore.DeleteTranscriptions"/>, one transaction), then
+    /// takes them out of the file notes they were copied into: the automatic part of each note that still reads a deleted
+    /// transcript is replaced by the newest transcription of that file that stays, or removed; what the examiner wrote
+    /// above it is kept. A note whose transcript is another one (a newer run) is left as it is. Files are found by
+    /// <paramref name="mediaByRef"/>; a file not in it is found by its note's text, only when that text is no other
+    /// transcription's. The files can be transcribed again afterwards.
+    /// </summary>
+    public static (int Deleted, int NotesChanged) Delete(TagStore tags, AiStore store, IReadOnlyCollection<long> ids,
+                                                         IReadOnlyDictionary<string, MediaRef> mediaByRef)
+    {
+        if (ids.Count == 0) return (0, 0);
+        var wanted = ids.ToHashSet();
+        var before = store.Transcriptions();
+        var doomed = before.Where(r => wanted.Contains(r.Id)).ToList();
+        if (doomed.Count == 0) return (0, 0);
+        // every text a deleted transcription may have left in a note: as saved, and as the examiner revised it
+        var revisions = store.Revisions(doomed.Select(r => r.Id).ToList());
+        var deletedTexts = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        foreach (var r in doomed)
+            foreach (var cite in r.Cited.Where(IsMediaCite))
+            {
+                var set = deletedTexts.TryGetValue(cite, out var x) ? x : deletedTexts[cite] = new(StringComparer.Ordinal);
+                foreach (var v in new[] { r, Revised(r, revisions) }.OfType<AiResult>())
+                {
+                    set.Add(Norm(v.Output));
+                    if (AiText.Notes([v], cite).FirstOrDefault(n => n.Name == "Transcription")?.Text is { } t) set.Add(Norm(t));
+                }
+                set.Remove("");
+            }
+        var deleted = store.DeleteTranscriptions(ids).Count;
+        if (deleted == 0) return (0, 0);
+
+        // what each affected file reads now: its newest transcription left, as revised; null when none (or it is excluded)
+        var left = store.Transcriptions();
+        var leftRevisions = store.Revisions(left.Select(r => r.Id).ToList());
+        var replacement = new Dictionary<string, string?>(StringComparer.Ordinal);
+        foreach (var cite in deletedTexts.Keys)
+        {
+            var newest = left.FirstOrDefault(r => r.Cited.Contains(cite));
+            replacement[cite] = newest is null || Revised(newest, leftRevisions) is not { } rv ? null
+                : AiText.Notes([rv], cite).FirstOrDefault(n => n.Name == "Transcription")?.Text is { Length: > 0 } t ? t : null;
+        }
+        // texts other transcriptions read: a note holding one of them is never matched by text alone
+        var otherTexts = left.Select(r => Norm(r.Output)).ToHashSet(StringComparer.Ordinal);
+
+        var notes = tags.FileNotes();
+        var writes = new List<(string Table, string Note)>();
+        var done = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (cite, texts) in deletedTexts)
+        {
+            var id = cite["[media#".Length..^1];
+            IEnumerable<string> keys = mediaByRef.TryGetValue(id, out var m) ? Keys(m)
+                : notes.Where(kv => texts.Contains(Norm(Body(kv.Value))) && !otherTexts.Contains(Norm(Body(kv.Value)))
+                                    && deletedTexts.Count(d => d.Value.Contains(Norm(Body(kv.Value)))) == 1).Select(kv => kv.Key).ToList();
+            foreach (var key in keys)
+            {
+                if (!notes.TryGetValue(key, out var note) || !done.Add(key)) continue;
+                var body = Norm(Body(note));
+                if (body == "" || !texts.Contains(body)) continue; // another transcript, or none: not ours to change
+                var head = ExaminerText(note);
+                var updated = replacement[cite] is { } t ? TagStore.MergeTranscript(head == "" ? null : head, t) : head;
+                notes[key] = updated;
+                writes.Add((TagStore.FilePrefix + key, updated));
+            }
+        }
+        tags.SetFileNotes(writes);
+        return (deleted, writes.Count);
+    }
+
+    static bool IsMediaCite(string c) => c.StartsWith("[media#", StringComparison.Ordinal) && c.EndsWith(']') && c.Length > "[media#]".Length;
+    static string Norm(string s) => s.Replace("\r\n", "\n").Trim();
+
     /// <summary>The result as the examiner left it, or null when they excluded it. Same rule as <see cref="AiText.AsRevised"/>.</summary>
     static AiResult? Revised(AiResult result, IReadOnlyDictionary<long, AiRevision> revisions)
     {

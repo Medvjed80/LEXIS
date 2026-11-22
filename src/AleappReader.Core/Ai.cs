@@ -66,6 +66,11 @@ public sealed class AiClient(AiProvider provider, string? apiKey)
 {
     static readonly HttpClient Http = new() { Timeout = Timeout.InfiniteTimeSpan }; // each call has its own token
     public AiProvider Provider => provider;
+    /// <summary>The most context (num_ctx) LEXIS asks Ollama for, whatever the model advertises: a model that claims
+    /// 256K tokens would otherwise be loaded with a huge KV cache that spills out of an 8 GB graphics card. Null: no cap
+    /// beyond the model's own context. Set from AI settings › Max context (num_ctx).</summary>
+    public int? MaxContext { get; init; }
+    public const int DefaultMaxContext = 16_384;
     string Root => provider.Address.TrimEnd('/');
     string Base => provider.Kind == AiKind.Ollama ? Root + "/v1" : Root;
 
@@ -117,7 +122,7 @@ public sealed class AiClient(AiProvider provider, string? apiKey)
     /// LM Studio loads a model that is not loaded with its own default context, taken here as 4,096 tokens.
     public async Task<int?> ContextOf(string model, CancellationToken ct = default) =>
         provider.Kind == AiKind.ClaudeCli ? 200_000
-        : provider.Kind == AiKind.Ollama ? (await OllamaShow(model, ct)).Context
+        : provider.Kind == AiKind.Ollama ? Capped((await OllamaShow(model, ct)).Context, MaxContext)
         : provider.Kind == AiKind.OpenAi && await LmStudio(model, ct) is JsonObject x ? LmModel(x).Context ?? 4096 : null;
 
     static AiModel LmModel(JsonNode x) => new((string)x["id"]!, (string?)x["type"] == "vlm" ? true : null,
@@ -146,19 +151,36 @@ public sealed class AiClient(AiProvider provider, string? apiKey)
         catch (Exception e) when (e is AiException or FormatException or InvalidOperationException) { return new AiModel(model, null); }
     }
 
-    /// <summary>Ollama's own chat API, which takes the context size: num_ctx is set to what the request needs (prompt
-    /// and answer, in steps of 2,048 tokens), never more than <paramref name="maxContext"/>.</summary>
-    async Task<string> OllamaChat(string model, string system, string user, IReadOnlyList<AiImage>? images, int? maxContext, CancellationToken ct)
+    /// <summary>The model's context, no larger than <paramref name="cap"/> (when set); the cap alone when the model does not say.</summary>
+    public static int? Capped(int? modelContext, int? cap) =>
+        cap is > 0 ? Math.Min(modelContext ?? cap.Value, cap.Value) : modelContext;
+
+    /// <summary>The num_ctx of one Ollama request: what it needs (prompt and answer, in steps of 2,048 tokens), never more
+    /// than the model's context (32,768 when unknown) nor the cap from AI settings.</summary>
+    public static int OllamaNumCtx(int systemChars, int userChars, int images, int? modelContext, int? cap)
+    {
+        var need = (systemChars + userChars) / 3 + 4096 + images * 1024;
+        return Math.Min((need + 2047) / 2048 * 2048, Capped(modelContext, cap) ?? 32_768);
+    }
+
+    /// <summary>The body of an /api/chat request. <c>think: false</c>: a reasoning model (qwen3, deepseek-r1…) answers
+    /// straight away instead of spending minutes and context on hidden reasoning; models without thinking ignore it.</summary>
+    public static JsonObject OllamaChatBody(string model, string system, string user, IReadOnlyList<AiImage>? images, int? modelContext, int? cap)
     {
         var msg = new JsonObject { ["role"] = "user", ["content"] = user };
         if (images is { Count: > 0 }) msg["images"] = new JsonArray([.. images.Select(i => (JsonNode)Convert.ToBase64String(i.Data))]);
-        var need = (system.Length + user.Length) / 3 + 4096 + (images?.Count ?? 0) * 1024;
-        var ctx = Math.Min((need + 2047) / 2048 * 2048, maxContext ?? 32_768);
-        var body = new JsonObject
+        var ctx = OllamaNumCtx(system.Length, user.Length, images?.Count ?? 0, modelContext, cap);
+        return new JsonObject
         {
-            ["model"] = model, ["stream"] = false, ["options"] = new JsonObject { ["temperature"] = 0, ["num_ctx"] = ctx },
+            ["model"] = model, ["stream"] = false, ["think"] = false, ["options"] = new JsonObject { ["temperature"] = 0, ["num_ctx"] = ctx },
             ["messages"] = new JsonArray(new JsonObject { ["role"] = "system", ["content"] = system }, msg),
         };
+    }
+
+    /// <summary>Ollama's own chat API, which takes the context size (see <see cref="OllamaNumCtx"/>).</summary>
+    async Task<string> OllamaChat(string model, string system, string user, IReadOnlyList<AiImage>? images, int? maxContext, CancellationToken ct)
+    {
+        var body = OllamaChatBody(model, system, user, images, maxContext, MaxContext);
         var j = await Send(Req(HttpMethod.Post, Root + "/api/chat", Json(body)), ct);
         return ((string?)j["message"]?["content"] ?? throw new AiException("The reply has no text")).Trim();
     }
@@ -283,6 +305,7 @@ public sealed class AiStore(string path)
               prompt TEXT, scope TEXT, output TEXT, cited TEXT, unknown TEXT, send_id INTEGER);
             CREATE TABLE IF NOT EXISTS done(key TEXT PRIMARY KEY, at INTEGER);
             CREATE TABLE IF NOT EXISTS revisions(id INTEGER PRIMARY KEY, result_id INTEGER, at INTEGER, action TEXT, text TEXT);
+            CREATE TABLE IF NOT EXISTS deletions(id INTEGER PRIMARY KEY, at INTEGER, result_id INTEGER, kind TEXT, provider TEXT, model TEXT, cited TEXT, send_id INTEGER);
             """;
         cmd.ExecuteNonQuery();
         return con;
@@ -310,7 +333,10 @@ public sealed class AiStore(string path)
     {
         using var con = Open();
         var at = Now;
-        var id = Insert(con, "INSERT INTO results(at,kind,provider,location,model,prompt,scope,output,cited,unknown,send_id) VALUES(@p0,@p1,@p2,@p3,@p4,@p5,@p6,@p7,@p8,@p9,@p10)",
+        // a deleted result's id is never given again, so the deletions log and any copy of an old id stay unambiguous
+        var id = Insert(con, "INSERT INTO results(id,at,kind,provider,location,model,prompt,scope,output,cited,unknown,send_id) VALUES(" +
+                        "(SELECT coalesce(max(m), 0) + 1 FROM (SELECT max(id) AS m FROM results UNION ALL SELECT max(result_id) FROM deletions))," +
+                        "@p0,@p1,@p2,@p3,@p4,@p5,@p6,@p7,@p8,@p9,@p10)",
                         at, kind, p.Name, p.Where, model, prompt, scope, output, JsonSerializer.Serialize(cited), JsonSerializer.Serialize(unknown), sendId);
         return new AiResult(id, DateTimeOffset.FromUnixTimeMilliseconds(at), kind, p.Name, p.Where, model, prompt, scope, output, cited, unknown);
     }
@@ -381,6 +407,100 @@ public sealed class AiStore(string path)
                 r.GetString(5), r.GetString(6), r.GetString(7), r.GetString(8),
                 JsonSerializer.Deserialize<List<string>>(r.GetString(9)) ?? [], JsonSerializer.Deserialize<List<string>>(r.GetString(10)) ?? []));
         return [.. list.Where(x => x.Cited.Contains(key))];
+    }
+
+    /// <summary>The key a finished transcription leaves in <c>done</c>, so a run does not transcribe the file again.</summary>
+    public static string TranscribeKey(string provider, string model, string refId) => $"transcribe|{provider}|{model}|{refId}";
+
+    /// <summary>
+    /// Deletes these transcriptions (other kinds of result are left alone) with their revisions, in one transaction. The
+    /// done keys of each file they cite go too, unless another transcription of that file by the same engine and model
+    /// stays, so the file can be transcribed again. The send log is kept (it says what left the machine) and each
+    /// deletion is recorded in <c>deletions</c> (when, which result, engine, model, files cited; not the text).
+    /// Returns the deleted transcriptions as they were, newest first.
+    /// </summary>
+    public IReadOnlyList<AiResult> DeleteTranscriptions(IReadOnlyCollection<long> ids)
+    {
+        if (ids.Count == 0 || !File.Exists(path)) return [];
+        using var con = Open();
+        using var tx = con.BeginTransaction();
+        SqliteCommand Cmd(string sql)
+        {
+            var c = con.CreateCommand();
+            c.Transaction = tx;
+            c.CommandText = sql;
+            return c;
+        }
+        var deleted = new List<(AiResult Result, long SendId)>();
+        var all = new List<(long Id, string Provider, string Model, List<string> Cited)>();
+        using (var cmd = Cmd("SELECT id,at,kind,provider,location,model,prompt,scope,output,cited,unknown,send_id FROM results WHERE kind = 'Transcription' ORDER BY id DESC"))
+        using (var r = cmd.ExecuteReader())
+        {
+            var wanted = ids.ToHashSet();
+            while (r.Read())
+            {
+                var cited = JsonSerializer.Deserialize<List<string>>(r.GetString(9)) ?? [];
+                all.Add((r.GetInt64(0), r.GetString(3), r.GetString(5), cited));
+                if (!wanted.Contains(r.GetInt64(0))) continue;
+                deleted.Add((new AiResult(r.GetInt64(0), DateTimeOffset.FromUnixTimeMilliseconds(r.GetInt64(1)), r.GetString(2), r.GetString(3), r.GetString(4),
+                    r.GetString(5), r.GetString(6), r.GetString(7), r.GetString(8), cited,
+                    JsonSerializer.Deserialize<List<string>>(r.GetString(10)) ?? []), r.IsDBNull(11) ? 0 : r.GetInt64(11)));
+            }
+        }
+        if (deleted.Count == 0) return [];
+        var gone = deleted.Select(d => d.Result.Id).ToHashSet();
+        using (var del = Cmd("DELETE FROM revisions WHERE result_id = @id; DELETE FROM results WHERE id = @id"))
+        using (var log = Cmd("INSERT INTO deletions(at,result_id,kind,provider,model,cited,send_id) VALUES(@at,@id,@k,@p,@m,@c,@s)"))
+        {
+            var id = del.Parameters.Add("@id", SqliteType.Integer);
+            foreach (var (res, sendId) in deleted)
+            {
+                id.Value = res.Id;
+                del.ExecuteNonQuery();
+                log.Parameters.Clear();
+                log.Parameters.AddWithValue("@at", Now);
+                log.Parameters.AddWithValue("@id", res.Id);
+                log.Parameters.AddWithValue("@k", res.Kind);
+                log.Parameters.AddWithValue("@p", res.Provider);
+                log.Parameters.AddWithValue("@m", res.Model);
+                log.Parameters.AddWithValue("@c", JsonSerializer.Serialize(res.Cited));
+                log.Parameters.AddWithValue("@s", sendId);
+                log.ExecuteNonQuery();
+            }
+        }
+        // what stays: (engine, model, file) of the transcriptions not deleted keep their done key
+        var kept = all.Where(x => !gone.Contains(x.Id))
+            .SelectMany(x => x.Cited.Where(IsMediaCite).Select(c => TranscribeKey(x.Provider, x.Model, c["[media#".Length..^1])))
+            .ToHashSet(StringComparer.Ordinal);
+        var refs = deleted.SelectMany(d => d.Result.Cited).Where(IsMediaCite).Select(c => c["[media#".Length..^1]).ToHashSet(StringComparer.Ordinal);
+        var keys = new List<string>();
+        using (var cmd = Cmd("SELECT key FROM done WHERE key LIKE 'transcribe|%'"))
+        using (var r = cmd.ExecuteReader())
+            while (r.Read())
+            {
+                var k = r.GetString(0);
+                var cut = k.LastIndexOf('|');
+                if (cut > 0 && refs.Contains(k[(cut + 1)..]) && !kept.Contains(k)) keys.Add(k);
+            }
+        using (var cmd = Cmd("DELETE FROM done WHERE key = @k"))
+        {
+            var k = cmd.Parameters.Add("@k", SqliteType.Text);
+            foreach (var key in keys) { k.Value = key; cmd.ExecuteNonQuery(); }
+        }
+        tx.Commit();
+        return [.. deleted.Select(d => d.Result)];
+    }
+
+    static bool IsMediaCite(string c) => c.StartsWith("[media#", StringComparison.Ordinal) && c.EndsWith(']') && c.Length > "[media#]".Length;
+
+    /// <summary>How many transcriptions have been deleted from this base (the audit of <see cref="DeleteTranscriptions"/>).</summary>
+    public int DeletedCount()
+    {
+        if (!File.Exists(path)) return 0;
+        using var con = Open();
+        using var cmd = con.CreateCommand();
+        cmd.CommandText = "SELECT count(*) FROM deletions";
+        return Convert.ToInt32(cmd.ExecuteScalar());
     }
 
     public const string Edit = "edit", Exclude = "exclude", Restore = "restore";
