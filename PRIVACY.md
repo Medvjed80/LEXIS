@@ -32,6 +32,7 @@ categories** (art. 9) and **criminal-offence data** (art. 10). LEXIS handles it 
 | Logs | `%LOCALAPPDATA%\AleappReader\errors.log`: exception **types and stack frames only**, no messages, no paths, no case content; capped at 256 KB | Messages are withheld because they can quote file names or record text. |
 | Temporary copies of evidence | Created in `%TEMP%\AleappReader`; **deleted when LEXIS closes**, and swept at the next start after a crash | Evidence itself is never modified; databases are opened from copies. |
 | Settings | `%APPDATA%\AleappReader\settings.json`: UI choices, time zone, **recent case paths**, AI endpoints. API keys are stored **encrypted with Windows DPAPI** for the current Windows user, never in clear and never in the repository | Delete the file to forget the recent cases. |
+| Analysis state (`.lexisstate`) | Written **only when the examiner exports it**, where they save it | Tags, examiner notes, metadata (artifact, row id, path, size, a date) and SHA-256 hashes; no evidence content, but still case data: keep and delete it with the case. Nothing sends it anywhere. |
 
 ## 4. Optional features that can send data out (opt-in only)
 

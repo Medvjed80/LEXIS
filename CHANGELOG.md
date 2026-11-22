@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **Analysis state: export and import of tags and notes across parsings.** *Analysis state › Export analysis state… /
+  Import analysis state…* (Italian Windows: *Stato analisi › Esporta / Importa stato analisi…*) in the toolbar saves the
+  selected device's tags, examiner notes and tag definitions to a versioned `.lexisstate` JSON file, and loads them onto a
+  new parsing of the same extraction made with a newer LEXIS / ALEAPP / iLEAPP. Items are re-aligned in tiers, each an
+  equality: SHA-256 for files and a content hash over the row's normalised fields for records (recomputed on the old
+  field list, so added columns do not break it); then a secondary key (identity fields, or row id with the source database
+  unchanged); then path + size for files whose hash could not be read. Several targets: all tagged and flagged ambiguous.
+  The import is additive (existing tags are kept, notes merged), shows a summary (by hash / secondary / path, ambiguous,
+  not found, new items of this parsing) that can be saved as CSV or text, and is written to the Exports log. The file has
+  no evidence content (metadata and hashes only) and stays local. See `docs/analysis-state.md`.
+
 ## 1.2.9
 
 UFED/UFADE advanced logical extractions: nothing in the zip is left out any more. Checked on synthetic zips laid out as UFADE writes them.

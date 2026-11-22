@@ -51,6 +51,15 @@
                     <Button Style="{StaticResource ToolButton}" Command="{Binding PortableCaseCommand}" ToolTip="Create a single zip with the case and this reader">
                         <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Icon}" Text="&#xE7B8;"/><TextBlock Text=" Portable case"/></StackPanel>
                     </Button>
+                    <Menu Background="Transparent" VerticalAlignment="Center" ToolTip="{x:Static views:StateText.MenuTip}">
+                        <MenuItem Foreground="White" IsEnabled="{Binding HasCase}">
+                            <MenuItem.Header>
+                                <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Icon}" Text="&#xE74E;"/><TextBlock Text="{x:Static views:StateText.Menu}" Margin="4,0,0,0"/></StackPanel>
+                            </MenuItem.Header>
+                            <MenuItem Header="{x:Static views:StateText.ExportHeader}" Foreground="Black" Command="{Binding ExportAnalysisStateCommand}"/>
+                            <MenuItem Header="{x:Static views:StateText.ImportHeader}" Foreground="Black" Command="{Binding ImportAnalysisStateCommand}"/>
+                        </MenuItem>
+                    </Menu>
                     <Button Style="{StaticResource ToolButton}" Command="{Binding VerifyPackageCommand}" ToolTip="Check a portable case zip against its SHA256SUMS.txt and signature, without opening it">
                         <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Icon}" Text="&#xE9D5;"/><TextBlock Text=" Verify package"/></StackPanel>
                     </Button>

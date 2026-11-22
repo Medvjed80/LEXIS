@@ -134,7 +134,8 @@ public partial class MainViewModel : ObservableObject
     public IReadOnlyList<TimeZoneInfo> Zones { get; } = TimeZoneInfo.GetSystemTimeZones();
 
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasCase), nameof(WindowTitle))]
-    [NotifyCanExecuteChangedFor(nameof(PortableCaseCommand), nameof(SearchCommand), nameof(CloseCaseCommand), nameof(AnalyzeWithAiCommand))]
+    [NotifyCanExecuteChangedFor(nameof(PortableCaseCommand), nameof(SearchCommand), nameof(CloseCaseCommand), nameof(AnalyzeWithAiCommand),
+                               nameof(ExportAnalysisStateCommand), nameof(ImportAnalysisStateCommand))]
     private CaseSession? session;
     [ObservableProperty] private TabViewModel? selectedTab;
     public ObservableCollection<TabViewModel> Tabs { get; } = [];
@@ -181,7 +182,8 @@ public partial class MainViewModel : ObservableObject
     {
         OnPropertyChanged(nameof(HasCase));
         OnPropertyChanged(nameof(WindowTitle));
-        foreach (var c in new IRelayCommand[] { PortableCaseCommand, SearchCommand, CloseCaseCommand, AnalyzeWithAiCommand }) c.NotifyCanExecuteChanged();
+        foreach (var c in new IRelayCommand[] { PortableCaseCommand, SearchCommand, CloseCaseCommand, AnalyzeWithAiCommand,
+                                                ExportAnalysisStateCommand, ImportAnalysisStateCommand }) c.NotifyCanExecuteChanged();
     }
     public IEnumerable<string> RecentCases => Settings.Current.RecentCases;
 
@@ -1306,7 +1308,8 @@ public partial class MainViewModel : ObservableObject
     void About() => AboutWindow.Show("About LEXIS",
         "LEXIS — LEAPP Reader\n\nA reader for the reports of ALEAPP (Android) and iLEAPP (iOS), which it also carries " +
         "and runs to analyze new extractions.\n" +
-        "Evidence databases are opened read-only. Tags and notes are stored in _reader_tags.db beside the case.\n\n" +
+        "Evidence databases are opened read-only. Tags and notes are stored in _reader_tags.db beside the case; " +
+        "Analysis state exports them to a local .lexisstate file and imports them into a newer parsing (matched by hash).\n\n" +
         "Built on the LEAPP project by Alexis Brignoni and its contributors (MIT license):\n" +
         "ALEAPP: https://github.com/abrignoni/ALEAPP\niLEAPP: https://github.com/abrignoni/iLEAPP\n\n" +
         "Projects studied for further features (ideas reimplemented; code is ported only where its license allows, with attribution):\n" +

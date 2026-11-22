@@ -281,4 +281,30 @@ public sealed class TagStore
         }
         tx.Commit();
     }
+
+    /// <summary>Writes an imported analysis state in one transaction: each row's tag and note as given (the caller has
+    /// already merged them with what the row held). Nothing is deleted.</summary>
+    public void SetImported(IReadOnlyList<(string Table, long RowId, string Tag, string Note)> rows)
+    {
+        if (rows.Count == 0) return;
+        using var con = Open();
+        using var tx = con.BeginTransaction();
+        using var cmd = con.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = """
+            INSERT INTO tags(table_name,row_id,tag,note,created) VALUES(@t,@r,@g,@n,@c)
+            ON CONFLICT(table_name,row_id) DO UPDATE SET tag=excluded.tag, note=excluded.note
+            """;
+        var t = cmd.Parameters.Add("@t", SqliteType.Text);
+        var r = cmd.Parameters.Add("@r", SqliteType.Integer);
+        var g = cmd.Parameters.Add("@g", SqliteType.Text);
+        var n = cmd.Parameters.Add("@n", SqliteType.Text);
+        cmd.Parameters.AddWithValue("@c", DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+        foreach (var row in rows)
+        {
+            (t.Value, r.Value, g.Value, n.Value) = (row.Table, row.RowId, row.Tag, row.Note);
+            cmd.ExecuteNonQuery();
+        }
+        tx.Commit();
+    }
 }
