@@ -33,6 +33,7 @@ categories** (art. 9) and **criminal-offence data** (art. 10). LEXIS handles it 
 | Temporary copies of evidence | Created in `%TEMP%\AleappReader`; **deleted when LEXIS closes**, and swept at the next start after a crash | Evidence itself is never modified; databases are opened from copies. |
 | Settings | `%APPDATA%\AleappReader\settings.json`: UI choices, time zone, **recent case paths**, AI endpoints. API keys are stored **encrypted with Windows DPAPI** for the current Windows user, never in clear and never in the repository | Delete the file to forget the recent cases. |
 | Analysis state (`.lexisstate`) | Written **only when the examiner exports it**, where they save it | Tags, examiner notes, metadata (artifact, row id, path, size, a date) and SHA-256 hashes; no evidence content, but still case data: keep and delete it with the case. Nothing sends it anywhere. |
+| Image categories (`image_categories` in `_reader_ai.db`) | Written when the examiner runs *Categorize images*; exported to CSV only on request | Per picture: file name, device path, SHA-256, engine, model, scores and the model's one-line reason. AI-generated, unverified. With Ollama/LM Studio on this computer or an ONNX model, no picture leaves the machine; a remote server is used only when chosen, after a confirmation, and logged in the send log. |
 
 ## 4. Optional features that can send data out (opt-in only)
 

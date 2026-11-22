@@ -1,5 +1,49 @@
 # Changelog
 
+## 1.2.11
+
+Media Gallery: image categorization, a size filter and no more crash of the AI on a closed extraction; transcriptions can
+be deleted; Ollama answers without thinking and with a capped context.
+
+### Added
+- **Categorize images (Media Gallery).** *Categorize images ▾* labels the selected images, the images the filters keep or
+  all images with the categories of an editable list (default: Drugs, Money/Cash, Weapons, Documents/IDs, Vehicles,
+  Screenshots/Chats, Nudity/Sexual, Minors present, Alcohol, Other/None), each with a confidence. Engine: the vision model
+  of AI settings, asked for JSON held to a schema (Ollama `format`, `think: false`, temperature 0; OpenAI-compatible
+  `response_format`), or a **local ONNX classifier** (`.onnx` + `labels.txt`, e.g. a fine-tuned CLIP/ViT) run with ONNX
+  Runtime on DirectML or the CPU; both behind `IImageCategorizer`. Results go to the case's AI base (new table
+  `image_categories`: model, prompt version, time, the image's SHA-256, every score, reason, status). Badges on the tiles,
+  an *AI category* filter (category, any, not categorized, model refused), a confidence threshold (default 0.6), optional
+  `AI: <category>` tags on images that have no tag yet, CSV export. Cancellable; a stopped run resumes (images already done
+  by the same model and prompt version are skipped); an error on one image does not stop the batch; refusals are recorded
+  as "model refused". Marked AI-generated and unverified everywhere. See `docs/image-categorization.md`
+  (Italian: `docs/image-categorization.it.md`). Adds ONNX Runtime 1.24.4 and DirectML 1.15.4 (MIT) to the exe.
+- **Delete transcriptions.** In the AI window's *Results* tab, transcriptions can be deleted one at a time, several at once
+  (Ctrl/Shift+click) or all: *Delete selected* / *Delete all transcriptions* buttons, the Delete key and the right-click
+  menu, after a confirmation that gives the count. In one transaction the results, their revisions and the done keys
+  that would stop a new transcription are removed; the send log is kept and each deletion is logged (table `deletions`,
+  without the text). The transcript is also taken out of the files' notes (the examiner's own words in a note are kept;
+  an older transcription of the same file, if any, takes its place). Deleted files can be transcribed again; a deleted
+  result's id is never reused. Other kinds of AI result stay append-only.
+- **Size filter in the Media Gallery.** Presets (< 100 KB, 100 KB – 1 MB, 1 – 10 MB, 10 – 100 MB, > 100 MB), a custom
+  range with KB/MB/GB (decimals allowed, maximum included), and *Unknown size only*; files of unknown size are kept on
+  request (*Unknown too*). Combines with the other filters; the tile tooltip shows the size.
+- **AI settings › Max context (num_ctx)**, default 16384: the most context LEXIS asks Ollama for, whatever the model
+  advertises (a model claiming 256K tokens no longer fills an 8 GB card and spills onto the CPU); 0 removes the cap.
+  Requests are split into steps that fit.
+
+### Changed
+- **Ollama `/api/chat` is sent `think: false`**: reasoning models (qwen3, deepseek-r1…) answer straight away instead of
+  spending minutes and context on hidden reasoning. Models without thinking ignore it.
+
+### Fixed
+- **Gallery AI crash on a closed extraction.** Starting the AI from the Media Gallery (AI, Describe + OCR, Transcribe,
+  AI on selection) could crash LEXIS with `ObjectDisposedException` when the extraction's zip (UFED/UFADE or other zip
+  extraction) had been closed meanwhile (case closed or the extraction located/unlocked again). `ExtractionFiles` now
+  closes its zip under the same lock as every read and reports a closed extraction as `ExtractionClosedException` (an
+  `IOException`, so every reader that skips an unreadable file skips it); copies already made are still served; the
+  gallery commands catch it and say so in the status bar, skipping the files that could not be read.
+
 ## 1.2.10
 
 Analysis state: tags and notes carried from one parsing of an extraction to a newer one. Includes the 1.2.9 UFED/UFADE fixes.

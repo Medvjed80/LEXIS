@@ -33,6 +33,7 @@ elaborate da ALEAPP/iLEAPP. Include dati personali del proprietario e di terzi, 
 | Copie temporanee delle prove | Create in `%TEMP%\AleappReader`; **cancellate alla chiusura di LEXIS** e ripulite al primo avvio dopo un crash | Le prove originali non sono mai modificate. |
 | Impostazioni | `%APPDATA%\AleappReader\settings.json`: preferenze, fuso orario, **percorsi dei casi recenti**, endpoint AI. Le chiavi API sono **cifrate con DPAPI di Windows** per l'utente corrente, mai in chiaro e mai nel repository | Eliminare il file per dimenticare i casi recenti. |
 | Stato analisi (`.lexisstate`) | Scritto **solo quando l'esaminatore lo esporta**, dove lo salva | Tag, note dell'esaminatore, metadati (artefatto, riga, percorso, dimensione, una data) e hash SHA-256; nessun contenuto delle prove, ma resta un dato del caso: conservarlo e cancellarlo con il caso. Nessuna funzione lo invia altrove. |
+| Categorie immagini (`image_categories` in `_reader_ai.db`) | Scritte quando l'esaminatore avvia *Categorize images*; esportate in CSV solo su richiesta | Per immagine: nome file, percorso nel dispositivo, SHA-256, motore, modello, punteggi e la motivazione di una riga del modello. Generate dall'IA, non verificate. Con Ollama/LM Studio su questo computer o con un modello ONNX nessuna immagine esce dalla macchina; un server remoto si usa solo se scelto, dopo una conferma, e resta nel registro invii. |
 
 ## 4. Funzioni facoltative che possono inviare dati all'esterno (solo se attivate)
 
