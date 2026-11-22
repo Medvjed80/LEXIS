@@ -67,8 +67,11 @@ confidenze limitate a 0–1, una percentuale come 85 letta come 0.85. Un elenco 
 "refused", oppure un rifiuto in testo libero, viene registrato come rifiuto. Ogni invio è nel registro invii del caso,
 come per le altre funzioni IA.
 
-Con una scheda video da 8 GB scegli un modello di visione da circa 7–8 miliardi di parametri o meno in Q4 (per esempio
-`qwen2.5vl:7b`, `gemma3:4b`, `minicpm-v`); i modelli più grandi finiscono sulla CPU e diventano molto lenti.
+Con una scheda video da 8 GB scegli un modello di visione compatto che stia tutto nella memoria della GPU. Il modello
+consigliato è `qwen3-vl:4b-instruct` (circa 3,3 GB; usa il tag `-instruct`, non la variante `qwen3-vl:4b` che ragiona).
+Alternative: `gemma3:4b` (più veloce, un po' più debole sull'OCR difficile) e `qwen3.5:9b` (la migliore qualità, ma al
+limite sugli 8 GB — tienilo solo se `ollama ps` mostra 100% GPU, altrimenti usa `qwen3.5:4b`). I modelli più grandi
+finiscono sulla CPU e diventano molto lenti.
 
 ### Modello ONNX (classificatore locale)
 
@@ -100,7 +103,7 @@ lettura), tabella `image_categories`, una riga per immagine × motore × modello
 |---|---|
 | `ref_id`, `name`, `path` | l'id del file nella galleria, il nome del file, il percorso nel dispositivo |
 | `sha256` | SHA-256 dei byte dell'immagine così come letti |
-| `engine`, `model`, `prompt_version` | es. `Vision LLM (Ollama)`, `qwen2.5vl:7b`, `cat-v1-1a2b3c4d`; oppure `ONNX`, `clip.onnx#…`, `onnx-…` |
+| `engine`, `model`, `prompt_version` | es. `Vision LLM (Ollama)`, `qwen3-vl:4b-instruct`, `cat-v1-1a2b3c4d`; oppure `ONNX`, `clip.onnx#…`, `onnx-…` |
 | `at` | quando (UTC, millisecondi) |
 | `categories` | tutti i punteggi, JSON `[{"name","confidence"}]` |
 | `reason`, `status`, `error` | la motivazione del modello; `ok`, `refused` o `error`; il testo dell'errore |

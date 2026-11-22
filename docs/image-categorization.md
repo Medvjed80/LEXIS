@@ -62,8 +62,11 @@ or after text, names matched to the list regardless of case (others dropped), co
 such as 85 read as 0.85. An empty list with a reason starting "refused", or a plain-text refusal, is recorded as refused.
 Every send is in the case's send log, as for the other AI jobs.
 
-For an 8 GB graphics card choose a vision model of about 7–8B parameters or fewer in Q4 (for example `qwen2.5vl:7b`,
-`gemma3:4b`, `minicpm-v`); larger models spill onto the CPU and become very slow.
+For an 8 GB graphics card choose a compact vision model that fits entirely in GPU memory. The recommended model is
+`qwen3-vl:4b-instruct` (about 3.3 GB; use the `-instruct` tag, not the plain `qwen3-vl:4b` reasoning variant).
+Alternatives: `gemma3:4b` (faster, a little weaker on hard OCR) and `qwen3.5:9b` (best quality, but borderline on 8 GB —
+keep it only if `ollama ps` shows 100% GPU, otherwise use `qwen3.5:4b`). Larger models spill onto the CPU and become very
+slow.
 
 ### ONNX model (local classifier)
 
@@ -94,7 +97,7 @@ table `image_categories`, one row per picture × engine × model × prompt versi
 |---|---|
 | `ref_id`, `name`, `path` | the gallery's media id, the file name, its path in the device |
 | `sha256` | SHA-256 of the picture's bytes as read |
-| `engine`, `model`, `prompt_version` | e.g. `Vision LLM (Ollama)`, `qwen2.5vl:7b`, `cat-v1-1a2b3c4d`; or `ONNX`, `clip.onnx#…`, `onnx-…` |
+| `engine`, `model`, `prompt_version` | e.g. `Vision LLM (Ollama)`, `qwen3-vl:4b-instruct`, `cat-v1-1a2b3c4d`; or `ONNX`, `clip.onnx#…`, `onnx-…` |
 | `at` | when (UTC, milliseconds) |
 | `categories` | every score, JSON `[{"name","confidence"}]` |
 | `reason`, `status`, `error` | the model's reason; `ok`, `refused` or `error`; the error text |
