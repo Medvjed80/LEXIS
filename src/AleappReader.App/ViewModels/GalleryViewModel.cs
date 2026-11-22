@@ -23,6 +23,10 @@ public partial class GalleryItem(MediaRef media, IReadOnlyList<MediaUse> uses, b
     [ObservableProperty] private ImageSource? thumbnail;
     [ObservableProperty] private bool isChecked = isChecked;
     partial void OnIsCheckedChanged(bool value) => onCheck?.Invoke(this);
+    /// <summary>AI categories above the threshold, as a badge ("AI: Drugs 0.82 · Weapons 0.64"); empty when none.</summary>
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasCategories))] private string categories = "";
+    [ObservableProperty] private string categoriesTip = "";
+    public bool HasCategories => Categories != "";
     /// <summary>The tag of the file (gallery) or of its record (an artifact's thumbnails), shown as a dot on the tile.</summary>
     [ObservableProperty] private string? tag;
     /// <summary>What a file tag is keyed by: its path in the device.</summary>
@@ -193,9 +197,12 @@ public partial class GalleryViewModel : ObservableObject
             foreach (var e in all) d.TryAdd(e.Item1.RefId, ReadSize(e.Item1, x));
             return d;
         });
+        var cats = await Task.Run(ReadCategories);
         if (my != _load) return;
         _all = all;
         _sizes = sizes;
+        _categories = cats;
+        RefreshCategoryFilters();
         Apps = AppsView(_all.Where(e => e.App != "").DistinctBy(e => e.App).OrderBy(e => !e.Known).ThenBy(e => e.App, StringComparer.OrdinalIgnoreCase)
             .Select(e => new AppChoice(e.App, e.Known ? "Apps" : "Others")));
         App = AllApps;
@@ -215,8 +222,9 @@ public partial class GalleryViewModel : ObservableObject
         var query = SearchQuery.Parse(Filter);
         var (lo, hi) = ValueFormatter.Days(From, To); // the day after a change of summer time has its own offset
         var size = SizeFilter;
-        return _all.Where(e => (App == AllApps || e.App == App) && OfOrigin(e) && size.Matches(SizeOf(e.M)))
-            .Select(e => new GalleryItem(e.M, e.U, !_unchecked.Contains(e.M), OnCheck) { AppName = e.App, Tag = TagOf(e.M, e.U), Copies = e.C, Size = SizeOf(e.M) }).Where(i =>
+        var threshold = Threshold;
+        return _all.Where(e => (App == AllApps || e.App == App) && OfOrigin(e) && size.Matches(SizeOf(e.M)) && OfCategory(e.M, threshold))
+            .Select(e => WithBadge(new GalleryItem(e.M, e.U, !_unchecked.Contains(e.M), OnCheck) { AppName = e.App, Tag = TagOf(e.M, e.U), Copies = e.C, Size = SizeOf(e.M) }, threshold)).Where(i =>
             (Kind == "all" || i.Media.Kind == Kind) &&
             (lo is null && hi is null || i.Epoch is { } ep && ep >= (lo ?? long.MinValue) && ep <= (hi ?? long.MaxValue)) &&
             (query.IsEmpty || query.Matches([i.Media.Name, i.Media.Artifact, i.Media.SourcePath, .. i.Uses.SelectMany(u => new[] { u.Chat, u.Sender })])));
@@ -369,6 +377,7 @@ public partial class GalleryViewModel : ObservableObject
     }
     partial void OnFromChanged(DateTime? value) => ApplyFilter();
     partial void OnSizePresetChanged(string value) => ApplyFilter();
+    partial void OnCategoryFilterChanged(string value) => ApplyFilter();
     partial void OnSizeUnitChanged(string value) { if (IsCustomSize) ApplyFilter(); }
     partial void OnKeepUnknownSizeChanged(bool value) => ApplyFilter();
     partial void OnSizeMinChanged(string value) { if (IsCustomSize) ApplyFilter(); }

@@ -162,6 +162,36 @@ public partial class AiSettingsViewModel : ObservableObject
     [ObservableProperty] private int maxRecordsPerRequest;
     [ObservableProperty] private int parallelRequests;
     [ObservableProperty] private int maxContext;
+    [ObservableProperty] private string imageCategories = "";
+    [ObservableProperty] private double categoryThreshold;
+    [ObservableProperty] private bool categoriesAsTags;
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(IsOnnx))] private string categorizer = AiSettings.VisionLlmCategorizer;
+    public string[] Categorizers { get; } = [AiSettings.VisionLlmCategorizer, AiSettings.OnnxCategorizer];
+    public bool IsOnnx => Categorizer == AiSettings.OnnxCategorizer;
+    [ObservableProperty] private string onnxModelPath = "";
+    [ObservableProperty] private string onnxLabelsPath = "";
+    [ObservableProperty] private int onnxInputSize;
+    [ObservableProperty] private OnnxActivation onnxActivation;
+    public OnnxActivation[] OnnxActivations { get; } = Enum.GetValues<OnnxActivation>();
+    [ObservableProperty] private string onnxMean = "";
+    [ObservableProperty] private string onnxStd = "";
+
+    [RelayCommand]
+    void BrowseOnnxModel()
+    {
+        var d = new Microsoft.Win32.OpenFileDialog { Title = "ONNX image classifier", Filter = "ONNX model (*.onnx)|*.onnx|All files|*.*" };
+        if (d.ShowDialog() == true) OnnxModelPath = d.FileName;
+    }
+
+    [RelayCommand]
+    void BrowseOnnxLabels()
+    {
+        var d = new Microsoft.Win32.OpenFileDialog { Title = "Labels of the ONNX model (one per line, in output order)", Filter = "Labels (*.txt)|*.txt|All files|*.*" };
+        if (d.ShowDialog() == true) OnnxLabelsPath = d.FileName;
+    }
+
+    [RelayCommand]
+    void DefaultCategories() => ImageCategories = string.Join(Environment.NewLine, ImageCategorization.DefaultCategories);
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(VideoBySeconds))] private bool videoByPercent;
     public bool VideoBySeconds { get => !VideoByPercent; set => VideoByPercent = !value; }
     [ObservableProperty] private int videoPercent;
@@ -247,6 +277,10 @@ public partial class AiSettingsViewModel : ObservableObject
         foreach (var t in s.Themes) Themes.Add(new AiThemeRow { Name = t.Name, Indicators = t.Indicators });
         parallelRequests = s.ParallelRequests;
         maxContext = s.MaxContext;
+        (imageCategories, categoryThreshold, categoriesAsTags, categorizer) =
+            (string.Join(Environment.NewLine, s.ImageCategories), s.CategoryThreshold, s.CategoriesAsTags, s.Categorizer);
+        (onnxModelPath, onnxLabelsPath, onnxInputSize, onnxActivation, onnxMean, onnxStd) =
+            (s.OnnxModelPath, s.OnnxLabelsPath, s.OnnxInputSize, s.OnnxActivation, s.OnnxMean, s.OnnxStd);
         (claudePath, mcpAllowed, translateTo, answerLanguage, visionCategories, maxRecordsPerRequest) =
             (s.ClaudePath, s.McpAllowed, s.TranslateTo, s.AnswerLanguage, s.VisionCategories, s.MaxRecordsPerRequest);
         (explainWebLookup, webSearchUrl) = (s.ExplainWebLookup, s.WebSearchUrl);
@@ -374,6 +408,13 @@ public partial class AiSettingsViewModel : ObservableObject
         ai.ParallelRequests = Math.Clamp(ParallelRequests, 1, 64);
         ai.MaxContext = MaxContext <= 0 ? 0 : Math.Clamp(MaxContext, 2048, 1_048_576);
         ai.VisionCategories = VisionCategories.Trim();
+        var cats = ImageCategorization.ParseList(ImageCategories);
+        ai.ImageCategories = cats.Count > 0 ? cats : [.. ImageCategorization.DefaultCategories];
+        ai.CategoryThreshold = double.IsNaN(CategoryThreshold) ? ImageCategorization.DefaultThreshold : Math.Round(Math.Clamp(CategoryThreshold, 0, 1), 3);
+        ai.CategoriesAsTags = CategoriesAsTags;
+        ai.Categorizer = Categorizer == AiSettings.OnnxCategorizer ? AiSettings.OnnxCategorizer : AiSettings.VisionLlmCategorizer;
+        (ai.OnnxModelPath, ai.OnnxLabelsPath, ai.OnnxInputSize, ai.OnnxActivation, ai.OnnxMean, ai.OnnxStd) =
+            (OnnxModelPath.Trim(), OnnxLabelsPath.Trim(), Math.Clamp(OnnxInputSize, 32, 1024), OnnxActivation, OnnxMean.Trim(), OnnxStd.Trim());
         ai.Themes = [.. Themes.Where(t => t.Name.Trim() != "").Select(t => new AiTheme { Name = t.Name.Trim(), Indicators = t.Indicators.Trim() })];
         Settings.Current.Save(ai: true);
         Done?.Invoke();

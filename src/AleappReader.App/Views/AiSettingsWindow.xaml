@@ -190,6 +190,51 @@
                              ToolTip="Comma-separated; the vision model picks one per image, with a confidence"/>
                 </Grid>
 
+                <TextBlock Style="{StaticResource SectionHeader}" Text="Categorize images (Media Gallery)" Margin="0,14,0,4"/>
+                <TextBlock TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}" Margin="0,0,0,4"
+                           Text="Media Gallery › Categorize images labels each picture with the categories below and a confidence. AI-generated and unverified: a review aid, not a finding. Results are kept in the case's AI base with the model, the prompt version, the time and the image's SHA-256; a stopped run resumes."/>
+                <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="300"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
+                    <StackPanel>
+                        <TextBlock Text="Categories (one per line)" Margin="0,4,0,0"/>
+                        <Button Style="{StaticResource FlatButton}" Content="Default list" Command="{Binding DefaultCategoriesCommand}" HorizontalAlignment="Left" Margin="0,4,0,0"/>
+                    </StackPanel>
+                    <TextBox Grid.Column="1" Margin="6,4,0,4" Height="120" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
+                             Text="{Binding ImageCategories, UpdateSourceTrigger=PropertyChanged}"
+                             ToolTip="The vision model may only answer with these names. Changing the list makes a new prompt version: images are categorized again on the next run."/>
+                    <TextBlock Grid.Row="1" Text="Confidence threshold (0–1)" VerticalAlignment="Center"/>
+                    <TextBox Grid.Row="1" Grid.Column="1" Margin="6,0,0,4" Width="80" HorizontalAlignment="Left" VerticalContentAlignment="Center"
+                             Text="{Binding CategoryThreshold, UpdateSourceTrigger=PropertyChanged}"
+                             ToolTip="A category counts (badge, filter, tag) from this confidence on. Default 0.6. Every score is kept, so the threshold can be changed later."/>
+                    <CheckBox Grid.Row="2" Grid.ColumnSpan="2" Content="Tag images with their best category (tag 'AI: …', only images that have no tag yet)" IsChecked="{Binding CategoriesAsTags}" Margin="0,2,0,4"
+                              ToolTip="Off by default. The 'AI:' prefix marks the tag as AI-generated and unverified; a tag you set is never replaced."/>
+                    <TextBlock Grid.Row="3" Text="Categorizer" VerticalAlignment="Center"/>
+                    <ComboBox Grid.Row="3" Grid.Column="1" Margin="6,0,0,4" Width="160" HorizontalAlignment="Left" ItemsSource="{Binding Categorizers}" SelectedItem="{Binding Categorizer}"
+                              ToolTip="Vision LLM: the vision model chosen above (Ollama, LM Studio…), answering in JSON. ONNX model: a local image classifier (.onnx + labels.txt) run on this computer with ONNX Runtime (DirectML GPU, else CPU)."/>
+                    <Grid Grid.Row="4" Grid.ColumnSpan="2" Visibility="{Binding IsOnnx, Converter={StaticResource Vis}}">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="300"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
+                        <TextBlock Text="ONNX model (.onnx)" VerticalAlignment="Center"/>
+                        <TextBox Grid.Column="1" Margin="6,0,0,4" Text="{Binding OnnxModelPath, UpdateSourceTrigger=PropertyChanged}" VerticalContentAlignment="Center"/>
+                        <Button Grid.Column="2" Style="{StaticResource FlatButton}" Content="Browse…" Command="{Binding BrowseOnnxModelCommand}" Margin="4,0,0,4"/>
+                        <TextBlock Grid.Row="1" Text="Labels (labels.txt, one per line, output order)" VerticalAlignment="Center"/>
+                        <TextBox Grid.Row="1" Grid.Column="1" Margin="6,0,0,4" Text="{Binding OnnxLabelsPath, UpdateSourceTrigger=PropertyChanged}" VerticalContentAlignment="Center"/>
+                        <Button Grid.Row="1" Grid.Column="2" Style="{StaticResource FlatButton}" Content="Browse…" Command="{Binding BrowseOnnxLabelsCommand}" Margin="4,0,0,4"/>
+                        <TextBlock Grid.Row="2" Text="Input size (pixels, square)" VerticalAlignment="Center"/>
+                        <TextBox Grid.Row="2" Grid.Column="1" Margin="6,0,0,4" Width="80" HorizontalAlignment="Left" Text="{Binding OnnxInputSize, UpdateSourceTrigger=PropertyChanged}" VerticalContentAlignment="Center"
+                                 ToolTip="224 for most CLIP/ViT models; the model's own fixed input size wins when it has one"/>
+                        <TextBlock Grid.Row="3" Text="Scores" VerticalAlignment="Center"/>
+                        <ComboBox Grid.Row="3" Grid.Column="1" Margin="6,0,0,4" Width="160" HorizontalAlignment="Left" ItemsSource="{Binding OnnxActivations}" SelectedItem="{Binding OnnxActivation}"
+                                  ToolTip="Sigmoid: multi-label (several categories per image). Softmax: one category per image. None: the model already outputs probabilities."/>
+                        <TextBlock Grid.Row="4" Text="Mean / std (R,G,B; empty: ImageNet)" VerticalAlignment="Center"/>
+                        <StackPanel Grid.Row="4" Grid.Column="1" Orientation="Horizontal" Margin="6,0,0,4">
+                            <TextBox Width="150" Text="{Binding OnnxMean, UpdateSourceTrigger=PropertyChanged}" VerticalContentAlignment="Center" ToolTip="e.g. 0.485,0.456,0.406 (CLIP: 0.4815,0.4578,0.4082)"/>
+                            <TextBox Width="150" Margin="6,0,0,0" Text="{Binding OnnxStd, UpdateSourceTrigger=PropertyChanged}" VerticalContentAlignment="Center" ToolTip="e.g. 0.229,0.224,0.225 (CLIP: 0.2686,0.2613,0.2758)"/>
+                        </StackPanel>
+                    </Grid>
+                </Grid>
+
                 <TextBlock Style="{StaticResource SectionHeader}" Text="Video" Margin="0,14,0,4"/>
                 <TextBlock TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}" Margin="0,0,0,4"
                            Text="A video is analysed from frames taken by LEXIS's ffmpeg, each described by the video model above (the vision model when it is empty), and from its audio track transcribed. Each frame is taken in the middle of its stretch."/>

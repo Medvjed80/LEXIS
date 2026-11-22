@@ -1221,6 +1221,10 @@
                           ToolTip="Check: the AI buttons and exports act on the checked items"/>
                 <Ellipse Width="14" Height="14" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="5" Stroke="White" StrokeThickness="1.5"
                          Fill="{Binding Tag, Converter={StaticResource TagColor}}" ToolTip="{Binding Tag}" Visibility="{Binding Tag, Converter={StaticResource Vis}}"/>
+                <Border VerticalAlignment="Bottom" HorizontalAlignment="Left" Margin="3" Padding="4,1" CornerRadius="3" Background="#CC5B2C87"
+                        Visibility="{Binding HasCategories, Converter={StaticResource Vis}}" ToolTip="{Binding CategoriesTip}">
+                    <TextBlock Text="{Binding Categories}" Foreground="White" FontSize="10" TextTrimming="CharacterEllipsis" MaxWidth="158"/>
+                </Border>
             </Grid>
             <TextBlock Text="{Binding Media.Name}" TextTrimming="CharacterEllipsis" Margin="0,3,0,0"/>
             <TextBlock Text="{Binding Caption}" TextTrimming="CharacterEllipsis" FontSize="11" Foreground="{StaticResource MutedBrush}"/>
@@ -1292,6 +1296,22 @@
                             </Button.CommandParameter>
                             <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Icon}" Text="&#xE945;"/><TextBlock Text=" AI on selection"/></StackPanel>
                         </Button>
+                        <Menu Background="Transparent" VerticalAlignment="Center" Margin="0,0,6,0" IsEnabled="{Binding NotCategorizing}">
+                            <MenuItem ToolTip="Label each picture with the categories of AI settings (vision model or local ONNX model). AI-generated and unverified: a review aid, not a finding. A stopped run resumes.">
+                                <MenuItem.Header>
+                                    <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Icon}" Text="&#xE8EC;"/><TextBlock Text=" Categorize images ▾"/></StackPanel>
+                                </MenuItem.Header>
+                                <MenuItem Header="Selected images" Command="{Binding CategorizeSelectedCommand}" CommandParameter="{Binding SelectedItems, ElementName=GalleryList}"/>
+                                <MenuItem Header="Images the filters keep (all pages)" Command="{Binding CategorizeFilteredCommand}"/>
+                                <MenuItem Header="All images" Command="{Binding CategorizeAllCommand}"/>
+                                <Separator/>
+                                <MenuItem Header="Export categories (CSV)…" Command="{Binding ExportCategoriesCommand}"/>
+                            </MenuItem>
+                        </Menu>
+                        <Button Style="{StaticResource FlatButton}" Command="{Binding CancelCategorizeCommand}" Margin="0,0,8,0"
+                                Visibility="{Binding Categorizing, Converter={StaticResource Vis}}" ToolTip="Stop categorizing: the results so far are kept; a new run resumes">
+                            <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Icon}" Text="&#xE71A;"/><TextBlock Text=" Stop"/></StackPanel>
+                        </Button>
                         <Button Style="{StaticResource FlatButton}" Command="{Binding PrevPageCommand}"><TextBlock Style="{StaticResource Icon}" Text="&#xE76B;" FontSize="11"/></Button>
                         <TextBlock Text="{Binding PageText}" VerticalAlignment="Center" Margin="6,0" MinWidth="120" TextAlignment="Center"/>
                         <Button Style="{StaticResource FlatButton}" Command="{Binding NextPageCommand}"><TextBlock Style="{StaticResource Icon}" Text="&#xE76C;" FontSize="11"/></Button>
@@ -1342,6 +1362,11 @@
                             <TextBlock Text="–" VerticalAlignment="Center" Margin="4,0"/>
                             <DatePicker SelectedDate="{Binding To}" Width="115" ToolTip="To this day, included"/>
                         </StackPanel>
+                    </StackPanel>
+                    <StackPanel Margin="0,0,10,0">
+                        <TextBlock Style="{StaticResource FilterCaption}" Text="AI category"/>
+                        <ComboBox ItemsSource="{Binding CategoryFilters}" SelectedItem="{Binding CategoryFilter}" Width="150"
+                                  ToolTip="Images the AI put in this category at or above the threshold of AI settings (AI-generated, unverified). Not categorized: images with no result yet. Model refused: the model declined to label them."/>
                     </StackPanel>
                     <StackPanel Margin="0,0,10,0">
                         <TextBlock Style="{StaticResource FilterCaption}" Text="Size"/>

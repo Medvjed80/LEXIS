@@ -107,6 +107,9 @@ redistributable code, so Tesseract runs where that runtime is not installed.
 - CommunityToolkit.Mvvm 8.4.2, Copyright (c) .NET Foundation and Contributors, MIT.
 - Microsoft.Web.WebView2 1.0.4258.31, Copyright (C) Microsoft Corporation, under its
   own licence (BSD-style, https://www.nuget.org/packages/Microsoft.Web.WebView2).
+- ONNX Runtime 1.24.4 (Microsoft.ML.OnnxRuntime.DirectML, with onnxruntime.dll),
+  Copyright (c) Microsoft Corporation, MIT; its third-party notices ship in the package.
+- DirectML 1.15.4 (Microsoft.AI.DirectML, DirectML.dll), Copyright (c) Microsoft Corporation, MIT.
 
 ALEAPP and iLEAPP run inside LEXIS on an embedded CPython runtime (Python Software
 Foundation License) packaged with PyInstaller (GPL-2.0 with the bootloader exception,

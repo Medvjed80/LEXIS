@@ -209,6 +209,44 @@ public sealed class AiClient(AiProvider provider, string? apiKey)
         return ((string?)j["choices"]?[0]?["message"]?["content"] ?? throw new AiException("The reply has no text")).Trim();
     }
 
+    /// <summary>One request whose answer must follow the JSON <paramref name="schema"/>: Ollama's <c>format</c> (with
+    /// <c>think: false</c>, temperature 0), an OpenAI-compatible server's <c>response_format</c> json_schema (asked again
+    /// without it when the server does not take it), the Claude CLI as plain text. The caller still parses defensively.</summary>
+    public async Task<string> ChatJson(string model, string system, string user, IReadOnlyList<AiImage>? images, JsonObject schema,
+        CancellationToken ct = default, int? context = null)
+    {
+        if (provider.Kind == AiKind.Ollama)
+        {
+            var body = OllamaChatBody(model, system, user, images, context, MaxContext);
+            body["format"] = schema.DeepClone();
+            var j = await Send(Req(HttpMethod.Post, Root + "/api/chat", Json(body)), ct);
+            return ((string?)j["message"]?["content"] ?? throw new AiException("The reply has no text")).Trim();
+        }
+        if (provider.Kind is AiKind.ClaudeCli or AiKind.WhisperCpp) return await Chat(model, system, user, images, ct, context);
+        JsonNode content = user;
+        if (images is { Count: > 0 })
+        {
+            var parts = new JsonArray { new JsonObject { ["type"] = "text", ["text"] = user } };
+            foreach (var i in images)
+                parts.Add(new JsonObject { ["type"] = "image_url", ["image_url"] = new JsonObject { ["url"] = $"data:{i.Mime};base64,{Convert.ToBase64String(i.Data)}" } });
+            content = parts;
+        }
+        var req = new JsonObject
+        {
+            ["model"] = model, ["temperature"] = 0, ["stream"] = false,
+            ["messages"] = new JsonArray(new JsonObject { ["role"] = "system", ["content"] = system }, new JsonObject { ["role"] = "user", ["content"] = content }),
+            ["response_format"] = new JsonObject { ["type"] = "json_schema", ["json_schema"] = new JsonObject { ["name"] = "answer", ["strict"] = true, ["schema"] = schema.DeepClone() } },
+        };
+        JsonNode reply;
+        try { reply = await Send(Req(HttpMethod.Post, Base + "/chat/completions", Json(req)), ct); }
+        catch (AiException e) when (e.Message.StartsWith("400 ") || e.Message.StartsWith("422 "))
+        {
+            req.Remove("response_format"); // a server without structured output: the prompt asks for JSON anyway
+            reply = await Send(Req(HttpMethod.Post, Base + "/chat/completions", Json(req)), ct);
+        }
+        return ((string?)reply["choices"]?[0]?["message"]?["content"] ?? throw new AiException("The reply has no text")).Trim();
+    }
+
     /// <summary>A server without /audio/transcriptions: LM Studio answers 415 or "Unexpected endpoint", Ollama 404.</summary>
     public static bool NoSpeechEndpoint(string error) =>
         error.StartsWith("404 ") || error.StartsWith("405 ") || error.StartsWith("415 ") || error.Contains("Unexpected endpoint", StringComparison.OrdinalIgnoreCase);

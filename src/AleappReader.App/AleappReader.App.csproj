@@ -41,4 +41,11 @@
     <ProjectReference Include="..\AleappReader.Core\AleappReader.Core.csproj" />
   </ItemGroup>
 
+  <!-- DirectML (MIT, Microsoft.AI.DirectML, pulled in by Microsoft.ML.OnnxRuntime.DirectML in Core) for the ONNX image
+       categorizer: its own targets copy the DLL only for an x64 PlatformTarget, so it is carried here explicitly. -->
+  <ItemGroup Condition="Exists('$(NuGetPackageRoot)microsoft.ai.directml/1.15.4/bin/x64-win/DirectML.dll')">
+    <None Include="$(NuGetPackageRoot)microsoft.ai.directml/1.15.4/bin/x64-win/DirectML.dll" Link="DirectML.dll"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

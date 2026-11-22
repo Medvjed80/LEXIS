@@ -121,6 +121,37 @@ public sealed class AiSettings
     /// <summary>The most context (num_ctx) asked of Ollama, whatever the model advertises; 0: no cap. 16,384 tokens keeps
     /// a mid-size model inside an 8 GB graphics card.</summary>
     public int MaxContext { get; set; } = AiClient.DefaultMaxContext;
+
+    // ---- Categorize images (gallery) ----
+    public const string VisionLlmCategorizer = "Vision LLM", OnnxCategorizer = "ONNX model";
+    /// <summary>The categories "Categorize images" may give, in the examiner's words; editable in AI settings.</summary>
+    public List<string> ImageCategories { get; set; } = [.. ImageCategorization.DefaultCategories];
+    /// <summary>A category counts (badge, filter, tag) from this confidence on.</summary>
+    public double CategoryThreshold { get; set; } = ImageCategorization.DefaultThreshold;
+    /// <summary>Tag each untagged image with its best category above the threshold ("AI: Drugs"). Off by default.</summary>
+    public bool CategoriesAsTags { get; set; }
+    /// <summary><see cref="VisionLlmCategorizer"/> (the vision role) or <see cref="OnnxCategorizer"/> (a local .onnx model).</summary>
+    public string Categorizer { get; set; } = VisionLlmCategorizer;
+    public string OnnxModelPath { get; set; } = "";
+    public string OnnxLabelsPath { get; set; } = "";
+    public int OnnxInputSize { get; set; } = 224;
+    [JsonConverter(typeof(JsonStringEnumConverter<OnnxActivation>))] public OnnxActivation OnnxActivation { get; set; } = OnnxActivation.Sigmoid;
+    /// <summary>Per-channel mean and standard deviation of 0–1 RGB, comma separated; empty: ImageNet's.</summary>
+    public string OnnxMean { get; set; } = "";
+    public string OnnxStd { get; set; } = "";
+
+    /// <summary>The ONNX preprocessing as set (bad numbers fall back to ImageNet's).</summary>
+    [JsonIgnore] public OnnxOptions OnnxOptions => new(Math.Clamp(OnnxInputSize, 32, 1024), Floats(OnnxMean), Floats(OnnxStd), OnnxActivation);
+
+    static float[]? Floats(string s)
+    {
+        var parts = s.Split([',', ';', ' '], StringSplitOptions.RemoveEmptyEntries);
+        var list = new List<float>();
+        foreach (var p in parts)
+            if (float.TryParse(p, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var f)) list.Add(f);
+            else return null;
+        return list.Count == 3 ? [.. list] : null;
+    }
     public string VisionCategories { get; set; } =
         "weapons, drugs, identity documents, cash or payment cards, screenshots, vehicles, people, documents, other";
     public List<AiTheme> Themes { get; set; } =
