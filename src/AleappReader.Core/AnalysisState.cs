@@ -141,47 +141,39 @@ public sealed class ImportPlan
     public int NotesMerged { get; set; }
     public bool Applied { get; set; }
 
-    public string Summary(bool italian)
+    public string Summary()
     {
         var sb = new StringBuilder();
-        void L(string it, string en) => sb.AppendLine(italian ? it : en);
-        L($"Elementi nello stato: {Matches.Count:N0}", $"Items in the state: {Matches.Count:N0}");
-        L($"  abbinati per hash: {ByHash:N0}", $"  matched by hash: {ByHash:N0}");
-        L($"  abbinati per chiave secondaria: {BySecondary:N0}", $"  matched by secondary key: {BySecondary:N0}");
-        L($"  abbinati per percorso + dimensione: {ByPath:N0}", $"  matched by path + size: {ByPath:N0}");
-        L($"  ambigui (taggati su tutti i candidati): {Ambiguous:N0}", $"  ambiguous (tagged on every candidate): {Ambiguous:N0}");
-        L($"  non trovati: {NotFound:N0}", $"  not found: {NotFound:N0}");
-        L($"Elementi nuovi in questo parsing (non taggati): {NewRecords:N0} record" + (NewArtifacts > 0 ? $" ({NewArtifacts:N0} artefatti nuovi)" : "") +
-          (NewFiles is { } f ? $", {f:N0} file" : ""),
-          $"New items in this parsing (untagged): {NewRecords:N0} records" + (NewArtifacts > 0 ? $" ({NewArtifacts:N0} new artifacts)" : "") +
-          (NewFiles is { } g ? $", {g:N0} files" : ""));
+        sb.AppendLine($"Items in the state: {Matches.Count:N0}");
+        sb.AppendLine($"  matched by hash: {ByHash:N0}");
+        sb.AppendLine($"  matched by secondary key: {BySecondary:N0}");
+        sb.AppendLine($"  matched by path + size: {ByPath:N0}");
+        sb.AppendLine($"  ambiguous (tagged on every candidate): {Ambiguous:N0}");
+        sb.AppendLine($"  not found: {NotFound:N0}");
+        sb.AppendLine($"New items in this parsing (untagged): {NewRecords:N0} records" + (NewArtifacts > 0 ? $" ({NewArtifacts:N0} new artifacts)" : "") +
+                      (NewFiles is { } f ? $", {f:N0} files" : ""));
         if (Applied)
-        {
-            L($"Scritti: {Tagged:N0} tag; tag esistenti diversi mantenuti: {KeptExisting:N0}; note unite: {NotesMerged:N0}",
-              $"Written: {Tagged:N0} tags; different existing tags kept: {KeptExisting:N0}; notes merged: {NotesMerged:N0}");
-        }
+            sb.AppendLine($"Written: {Tagged:N0} tags; different existing tags kept: {KeptExisting:N0}; notes merged: {NotesMerged:N0}");
         foreach (var w in Warnings) sb.AppendLine("! " + w);
         return sb.ToString();
     }
 
-    /// <summary>The report for the record: the summary, then one line per item (no evidence content: artifact, row id,
-    /// path, hashes, tag, how it was matched and to what).</summary>
-    public string ToCsv(bool italian)
+    /// <summary>The report for the record: one line per item (no evidence content: artifact, row id, path, hashes, tag,
+    /// how it was matched and to what).</summary>
+    public string ToCsv()
     {
         var sb = new StringBuilder();
         static string C(string? v) => v is null ? "" : v.IndexOfAny([',', '"', '\n', '\r', ';']) >= 0 ? "\"" + v.Replace("\"", "\"\"") + "\"" : v;
-        sb.AppendLine(italian
-            ? "tipo,artefatto_o_percorso,riga_originale,tag,esito,regola,ambiguo,destinazioni,hash"
-            : "kind,artifact_or_path,original_row,tag,result,rule,ambiguous,targets,hash");
+        sb.AppendLine("kind,artifact_or_path,original_row,tag,result,rule,ambiguous,targets,hash");
         foreach (var m in Matches)
         {
             var r = m.Item.Record; var f = m.Item.File;
             var result = m.Tier switch
             {
-                MatchTier.Hash => italian ? "hash" : "hash",
-                MatchTier.Secondary => italian ? "chiave secondaria" : "secondary key",
-                MatchTier.Path => italian ? "percorso+dimensione" : "path+size",
-                _ => italian ? "non trovato" : "not found",
+                MatchTier.Hash => "hash",
+                MatchTier.Secondary => "secondary key",
+                MatchTier.Path => "path+size",
+                _ => "not found",
             };
             var targets = string.Join(" | ", m.Targets.Select(t => t.Table.StartsWith(TagStore.FilePrefix, StringComparison.Ordinal)
                 ? t.Table[TagStore.FilePrefix.Length..] : $"{t.Table}#{t.RowId}"));
@@ -191,28 +183,28 @@ public sealed class ImportPlan
         return sb.ToString();
     }
 
-    public string ToText(bool italian)
+    public string ToText()
     {
         var sb = new StringBuilder();
-        sb.AppendLine(italian ? "LEXIS — importazione stato analisi" : "LEXIS — analysis state import");
-        sb.AppendLine((italian ? "Stato esportato da " : "State exported by ") + $"LEXIS {State.AppVersion}, {State.ExportedUtc:yyyy-MM-dd HH:mm:ss} UTC, {State.Case.ParsedBy}");
-        sb.AppendLine((italian ? "Estrazione: " : "Extraction: ") + State.Case.ExtractionName);
+        sb.AppendLine("LEXIS — analysis state import");
+        sb.AppendLine($"State exported by LEXIS {State.AppVersion}, {State.ExportedUtc:yyyy-MM-dd HH:mm:ss} UTC, {State.Case.ParsedBy}");
+        sb.AppendLine("Extraction: " + State.Case.ExtractionName);
         sb.AppendLine();
-        sb.Append(Summary(italian));
-        void Section(string it, string en, IEnumerable<ItemMatch> list)
+        sb.Append(Summary());
+        void Section(string title, IEnumerable<ItemMatch> list)
         {
             var l = list.ToList();
             if (l.Count == 0) return;
-            sb.AppendLine().AppendLine((italian ? it : en) + $" ({l.Count:N0})");
+            sb.AppendLine().AppendLine(title + $" ({l.Count:N0})");
             foreach (var m in l)
                 sb.AppendLine($"  [{m.Item.Tag}] {m.Describe}" + (m.Item.Record?.Time is { } t ? $"  {t}" : "") +
                               (m.Targets.Count > 0 ? "  → " + string.Join(", ", m.Targets.Select(x => x.Table.StartsWith(TagStore.FilePrefix, StringComparison.Ordinal)
                                   ? x.Table[TagStore.FilePrefix.Length..] : $"#{x.RowId}")) : "") + (m.Rule != "" ? $"  ({m.Rule})" : ""));
         }
-        Section("Non trovati", "Not found", Matches.Where(m => m.Tier == MatchTier.None));
-        Section("Ambigui", "Ambiguous", Matches.Where(m => m.Ambiguous));
-        Section("Abbinati per chiave secondaria", "Matched by secondary key", Matches.Where(m => m.Tier == MatchTier.Secondary));
-        Section("Abbinati per percorso + dimensione (senza hash)", "Matched by path + size (no hash)", Matches.Where(m => m.Tier == MatchTier.Path));
+        Section("Not found", Matches.Where(m => m.Tier == MatchTier.None));
+        Section("Ambiguous", Matches.Where(m => m.Ambiguous));
+        Section("Matched by secondary key", Matches.Where(m => m.Tier == MatchTier.Secondary));
+        Section("Matched by path + size (no hash)", Matches.Where(m => m.Tier == MatchTier.Path));
         return sb.ToString();
     }
 }
@@ -337,16 +329,15 @@ public static class AnalysisState
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
             if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("format", out var f) || f.GetString() != FormatName)
-                throw new AnalysisStateException("Il file non è uno stato analisi LEXIS. / The file is not a LEXIS analysis state.");
+                throw new AnalysisStateException("The file is not a LEXIS analysis state.");
             if (!root.TryGetProperty("schemaVersion", out var v) || !v.TryGetInt32(out var version) || version < 1)
-                throw new AnalysisStateException("Versione dello schema mancante o non valida. / Missing or invalid schema version.");
+                throw new AnalysisStateException("Missing or invalid schema version.");
             if (version > SchemaVersion)
-                throw new AnalysisStateException($"Lo stato usa lo schema {version}, questa versione di LEXIS legge fino allo schema {SchemaVersion}: aggiornare LEXIS. / " +
-                                                 $"The state uses schema {version}; this LEXIS reads up to schema {SchemaVersion}: update LEXIS.");
+                throw new AnalysisStateException($"The state uses schema {version}; this LEXIS reads up to schema {SchemaVersion}: update LEXIS.");
             state = root.Deserialize<AnalysisStateFile>(Json);
         }
-        catch (JsonException e) { throw new AnalysisStateException("File stato analisi non leggibile. / Unreadable analysis state file: " + e.Message); }
-        return state ?? throw new AnalysisStateException("File stato analisi vuoto. / Empty analysis state file.");
+        catch (JsonException e) { throw new AnalysisStateException("Unreadable analysis state file: " + e.Message); }
+        return state ?? throw new AnalysisStateException("Empty analysis state file.");
     }
 
     // ----------------------------------------------------------------------------------------------------- import
@@ -358,10 +349,10 @@ public static class AnalysisState
     {
         var warnings = new List<string>();
         if (state.Case.Platform != "" && (s.Manifest.IsIos ? "iOS" : s.Manifest.IsAndroid ? "Android" : "") is { Length: > 0 } p && p != state.Case.Platform)
-            warnings.Add($"Piattaforma diversa: stato {state.Case.Platform}, caso {p}. / Different platform: state {state.Case.Platform}, case {p}.");
+            warnings.Add($"Different platform: state {state.Case.Platform}, case {p}.");
         var name = EvidenceOrigin.ExtractionName(s);
         if (state.Case.ExtractionName != "" && name != "" && !string.Equals(name, state.Case.ExtractionName, StringComparison.OrdinalIgnoreCase))
-            warnings.Add($"Nome dell'estrazione diverso: stato «{state.Case.ExtractionName}», caso «{name}». / Different extraction name.");
+            warnings.Add($"Different extraction name: state \"{state.Case.ExtractionName}\", case \"{name}\".");
 
         var matches = new List<ItemMatch>();
         using var con = s.OpenDb();
@@ -430,7 +421,7 @@ public static class AnalysisState
         }
         long? newFiles = state.Inventory.Files is { } of && files.Count is { } nf ? Math.Max(0, nf - of) : null;
         if (files.Count is null && fileItems.Count > 0)
-            warnings.Add("Estrazione non raggiungibile: i file sono confrontati solo con i media del caso. / The extraction is not reachable: files are compared with the case media only.");
+            warnings.Add("The extraction is not reachable: files are compared with the case media only.");
 
         return new ImportPlan { State = state, Matches = matches, Warnings = warnings, NewRecords = newRecords, NewArtifacts = newArtifacts, NewFiles = newFiles };
     }
@@ -539,7 +530,7 @@ public static class AnalysisState
                 }
                 var differs = m.Item.Tag != "" && m.Item.Tag != cur.Tag;
                 if (differs) kept++;
-                var add = differs ? $"[Stato importato / imported state: {m.Item.Tag}]" + (note == "" ? "" : " " + note) : note;
+                var add = differs ? $"[Imported state: {m.Item.Tag}]" + (note == "" ? "" : " " + note) : note;
                 if (add == "" || cur.Note.Contains(add, StringComparison.Ordinal)) continue;
                 writes[t] = (cur.Tag, cur.Note == "" ? add : cur.Note.TrimEnd() + "\n\n" + add);
                 merged++;

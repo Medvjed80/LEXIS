@@ -114,7 +114,7 @@ public sealed class AnalysisStateTests : IDisposable
             s.Tags.SetMany("contacts", [1], "Important");
             s.Tags.SetMany("old_only", [1], "Suspicious");
             s.Tags.SetFiles(["Dump/sdcard/DCIM/a.jpg", "Dump/sdcard/x.jpg", "Dump/sdcard/gone.txt"], "Evidence");
-            var state = AnalysisState.Export(s, [new TagDefinition("Evidence", "#D93025"), new TagDefinition("Important")], "1.2.9");
+            var state = AnalysisState.Export(s, [new TagDefinition("Evidence", "#D93025"), new TagDefinition("Important")], "1.2.10");
             var path = Path.Combine(_root, "case" + AnalysisState.Extension);
             AnalysisState.Save(state, path);
             json = File.ReadAllText(path);
@@ -195,10 +195,10 @@ public sealed class AnalysisStateTests : IDisposable
         Assert.Equal(before, n.Tags.Rows().Select(t => (t.TableName, t.RowId, t.Tag, t.Note)).ToList());
 
         // The report lists the unmatched and ambiguous items, without content.
-        var text = plan.ToText(true);
-        Assert.Contains("Non trovati (3)", text);
-        Assert.Contains("Ambigui (2)", text);
-        var csv = plan.ToCsv(false);
+        var text = plan.ToText();
+        Assert.Contains("Not found (3)", text);
+        Assert.Contains("Ambiguous (2)", text);
+        var csv = plan.ToCsv();
         Assert.Equal(10, csv.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length);
         Assert.DoesNotContain("Hello secret body", csv + text);
     }
@@ -212,7 +212,7 @@ public sealed class AnalysisStateTests : IDisposable
         var oldDir = Report("o", x, art.Replace("%ACC%", "Account"), "CREATE TABLE notes (title TEXT, body TEXT, acc TEXT); INSERT INTO notes VALUES ('t1','b1','me');");
         var newDir = Report("n", x, art.Replace("%ACC%", "Account Name"), "CREATE TABLE notes (title TEXT, body TEXT, acc TEXT); INSERT INTO notes VALUES ('t1','b1','me (renamed column)');");
         AnalysisStateFile state;
-        using (var s = CaseSession.Open(oldDir)) { s.Tags.SetMany("notes", [1], "Evidence"); state = AnalysisState.Export(s, [], "1.2.9"); }
+        using (var s = CaseSession.Open(oldDir)) { s.Tags.SetMany("notes", [1], "Evidence"); state = AnalysisState.Export(s, [], "1.2.10"); }
         using var n = CaseSession.Open(newDir);
         var m = AnalysisState.Plan(n, state).Matches.Single();
         Assert.Equal(MatchTier.Secondary, m.Tier);
@@ -222,7 +222,7 @@ public sealed class AnalysisStateTests : IDisposable
     [Fact]
     public void The_schema_version_is_checked()
     {
-        var ok = JsonSerializer.Serialize(new AnalysisStateFile { AppVersion = "1.2.9" });
+        var ok = JsonSerializer.Serialize(new AnalysisStateFile { AppVersion = "1.2.10" });
         Assert.Equal(1, AnalysisState.Parse(ok).SchemaVersion);
         var newer = Assert.Throws<AnalysisStateException>(() => AnalysisState.Parse(ok.Replace("\"schemaVersion\":1", "\"schemaVersion\":2")));
         Assert.Contains("schema 2", newer.Message);

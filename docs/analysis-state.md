@@ -1,7 +1,6 @@
 # Analysis state (`.lexisstate`)
 
-*Analysis state › Export analysis state… / Import analysis state…* in the toolbar (Italian Windows: *Stato analisi ›
-Esporta stato analisi… / Importa stato analisi…*) saves the examiner's tags and notes of the selected device to a file and
+*Analysis state › Export analysis state… / Import analysis state…* in the toolbar saves the examiner's tags and notes of the selected device to a file and
 loads them onto a **new parsing of the same extraction** — typically one made with a newer LEXIS / ALEAPP / iLEAPP that
 finds more. Items are re-aligned by hash, never by position.
 
@@ -55,7 +54,7 @@ The record's artifact is found by table name, else by artifact name + category.
 there is exactly one; otherwise every candidate is tagged and the item is flagged ambiguous.
 
 **Additive**: an untagged target takes the imported tag and note; a target that already has a tag keeps it, and the
-imported note (with the imported tag, when different) is appended to its note. Nothing is deleted; importing twice
+imported note (with `[Imported state: <tag>]` when the tag differs) is appended to its note. Nothing is deleted; importing twice
 changes nothing more. Tags the settings do not list are added to them.
 
 **Summary**: matched by hash / secondary key / path, ambiguous, not found, and the new items of this parsing

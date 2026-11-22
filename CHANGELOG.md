@@ -1,10 +1,12 @@
 # Changelog
 
-## Unreleased
+## 1.2.10
+
+Analysis state: tags and notes carried from one parsing of an extraction to a newer one. Includes the 1.2.9 UFED/UFADE fixes.
 
 ### Added
 - **Analysis state: export and import of tags and notes across parsings.** *Analysis state › Export analysis state… /
-  Import analysis state…* (Italian Windows: *Stato analisi › Esporta / Importa stato analisi…*) in the toolbar saves the
+  Import analysis state…* in the toolbar (English labels, like the rest of the UI) saves the
   selected device's tags, examiner notes and tag definitions to a versioned `.lexisstate` JSON file, and loads them onto a
   new parsing of the same extraction made with a newer LEXIS / ALEAPP / iLEAPP. Items are re-aligned in tiers, each an
   equality: SHA-256 for files and a content hash over the row's normalised fields for records (recomputed on the old

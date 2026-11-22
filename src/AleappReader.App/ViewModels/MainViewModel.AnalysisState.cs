@@ -13,7 +13,6 @@ namespace AleappReader.App.ViewModels;
 public partial class MainViewModel
 {
     static string AppVersion => typeof(MainViewModel).Assembly.GetName().Version?.ToString(3) ?? "";
-    static string T(string it, string en) => StateText.T(it, en);
 
     [RelayCommand(CanExecute = nameof(HasCase))]
     async Task ExportAnalysisState()
@@ -23,32 +22,30 @@ public partial class MainViewModel
         var dlg = new SaveFileDialog
         {
             Title = StateText.ExportHeader.TrimEnd('…'),
-            Filter = T("Stato analisi LEXIS", "LEXIS analysis state") + $" (*{AnalysisState.Extension})|*{AnalysisState.Extension}",
+            Filter = "LEXIS analysis state" + $" (*{AnalysisState.Extension})|*{AnalysisState.Extension}",
             FileName = Safe($"{dev}_{DateTime.Now:yyyyMMdd-HHmm}") + AnalysisState.Extension,
         };
         if (dlg.ShowDialog() != true) return;
         var defs = Settings.Current.Tags.Select(t => new TagDefinition(t, (TagColorConverter.Of(t) as SolidColorBrush)?.Color is { } c ? $"#{c.R:X2}{c.G:X2}{c.B:X2}" : null)).ToList();
         Busy = true;
-        Status = T("Esportazione dello stato analisi (calcolo degli hash)…", "Exporting the analysis state (hashing)…");
+        Status = "Exporting the analysis state (hashing)…";
         try
         {
             var state = await Task.Run(() => AnalysisState.Export(s, defs, AppVersion));
             await Task.Run(() => AnalysisState.Save(state, dlg.FileName));
             var files = state.Items.Count(i => i.Kind == "file");
             var unhashed = state.Items.Count(i => i.Kind == "file" && i.File!.Sha256 is null);
-            var items = $"{state.Items.Count - files:N0} record, {files:N0} file";
+            var items = $"{state.Items.Count - files:N0} records, {files:N0} files";
             ExportLog.Add("Analysis state (.lexisstate)", dlg.FileName, items, s);
-            Status = T("Stato analisi esportato: ", "Analysis state exported: ") + items;
-            MessageBox.Show(T($"Esportati {items} taggati in\n{dlg.FileName}", $"Exported {items} tagged to\n{dlg.FileName}") +
-                (unhashed > 0 ? T($"\n\n{unhashed:N0} file non leggibili ora: saranno riabbinati solo per percorso e dimensione.",
-                                  $"\n\n{unhashed:N0} files cannot be read now: they will be matched by path and size only.") : "") +
-                T("\n\nIl file contiene tag, note, metadati e hash (nessun contenuto delle prove), ma è comunque un dato del caso: conservarlo come tale.",
-                  "\n\nThe file holds tags, notes, metadata and hashes (no evidence content), but it is case data all the same: keep it as such."),
+            Status = "Analysis state exported: " + items;
+            MessageBox.Show($"Exported {items} tagged to\n{dlg.FileName}" +
+                (unhashed > 0 ? $"\n\n{unhashed:N0} files cannot be read now: they will be matched by path and size only." : "") +
+                "\n\nThe file holds tags, notes, metadata and hashes (no evidence content), but it is case data all the same: keep it as such.",
                 StateText.Menu, MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or Microsoft.Data.Sqlite.SqliteException)
         {
-            Status = T("Esportazione non riuscita.", "Export failed.");
+            Status = "Export failed.";
             MessageBox.Show(e.Message, StateText.Menu, MessageBoxButton.OK, MessageBoxImage.Warning);
         }
         finally { Busy = false; }
@@ -61,7 +58,7 @@ public partial class MainViewModel
         var dlg = new OpenFileDialog
         {
             Title = StateText.ImportHeader.TrimEnd('…'),
-            Filter = T("Stato analisi LEXIS", "LEXIS analysis state") + $" (*{AnalysisState.Extension})|*{AnalysisState.Extension}",
+            Filter = "LEXIS analysis state" + $" (*{AnalysisState.Extension})|*{AnalysisState.Extension}",
         };
         if (dlg.ShowDialog() != true) return;
         AnalysisStateFile state;
@@ -72,24 +69,21 @@ public partial class MainViewModel
             return;
         }
         Busy = true;
-        Status = T("Abbinamento degli elementi taggati al nuovo parsing (calcolo degli hash)…", "Matching the tagged items to this parsing (hashing)…");
+        Status = "Matching the tagged items to this parsing (hashing)…";
         ImportPlan plan;
         try { plan = await Task.Run(() => AnalysisState.Plan(s, state)); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or Microsoft.Data.Sqlite.SqliteException)
         {
-            Status = T("Importazione non riuscita.", "Import failed.");
+            Status = "Import failed.";
             MessageBox.Show(e.Message, StateText.Menu, MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
         finally { Busy = false; }
 
-        var it = StateText.Italian;
-        var head = T($"Stato di LEXIS {state.AppVersion} del {state.ExportedUtc.ToLocalTime():yyyy-MM-dd HH:mm} ({state.Case.ParsedBy}).\n" +
-                     "L'importazione aggiunge tag e note: non cancella né sostituisce i tag già presenti.\n\n",
-                     $"State of LEXIS {state.AppVersion}, {state.ExportedUtc.ToLocalTime():yyyy-MM-dd HH:mm} ({state.Case.ParsedBy}).\n" +
-                     "The import adds tags and notes: it never deletes or replaces the tags already there.\n\n");
-        var preview = new AnalysisStateWindow(StateText.ImportHeader.TrimEnd('…'), head + plan.Summary(it), true, () => SaveReport(plan));
-        if (preview.ShowDialog() != true || preview.Result != AnalysisStateWindow.Choice.Import) { Status = T("Importazione annullata.", "Import cancelled."); return; }
+        var head = $"State of LEXIS {state.AppVersion}, {state.ExportedUtc.ToLocalTime():yyyy-MM-dd HH:mm} ({state.Case.ParsedBy}).\n" +
+                     "The import adds tags and notes: it never deletes or replaces the tags already there.\n\n";
+        var preview = new AnalysisStateWindow(StateText.ImportHeader.TrimEnd('…'), head + plan.Summary(), true, () => SaveReport(plan));
+        if (preview.ShowDialog() != true || preview.Result != AnalysisStateWindow.Choice.Import) { Status = "Import cancelled."; return; }
 
         try { await Task.Run(() => AnalysisState.Apply(s, plan)); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or Microsoft.Data.Sqlite.SqliteException)
@@ -111,26 +105,24 @@ public partial class MainViewModel
             foreach (var g in s.Tags.ForTable(table).Values.GroupBy(e => e.Tag))
                 OnTagChanged(art, g.Select(e => e.RowId).ToList(), g.Key == "" ? null : g.Key);
         }
-        Status = T($"Stato analisi importato: {plan.Tagged:N0} tag scritti, {plan.NotFound:N0} non trovati.",
-                   $"Analysis state imported: {plan.Tagged:N0} tags written, {plan.NotFound:N0} not found.");
-        new AnalysisStateWindow(StateText.ImportHeader.TrimEnd('…'), plan.ToText(it), false, () => SaveReport(plan)).ShowDialog();
+        Status = $"Analysis state imported: {plan.Tagged:N0} tags written, {plan.NotFound:N0} not found.";
+        new AnalysisStateWindow(StateText.ImportHeader.TrimEnd('…'), plan.ToText(), false, () => SaveReport(plan)).ShowDialog();
     }
 
     /// <summary>The import report for the case file: CSV (one line per item) or text (summary and lists).</summary>
     static void SaveReport(ImportPlan plan)
     {
-        var it = StateText.Italian;
         var dlg = new SaveFileDialog
         {
-            Title = T("Salva il report dell'importazione", "Save the import report"),
-            Filter = "CSV (*.csv)|*.csv|" + T("Testo", "Text") + " (*.txt)|*.txt",
-            FileName = $"lexis-import-stato_{DateTime.Now:yyyyMMdd-HHmm}.csv",
+            Title = "Save the import report",
+            Filter = "CSV (*.csv)|*.csv|" + "Text" + " (*.txt)|*.txt",
+            FileName = $"lexis-state-import_{DateTime.Now:yyyyMMdd-HHmm}.csv",
         };
         if (dlg.ShowDialog() != true) return;
         try
         {
             var csv = dlg.FileName.EndsWith(".csv", StringComparison.OrdinalIgnoreCase);
-            File.WriteAllText(dlg.FileName, csv ? plan.ToCsv(it) : plan.ToText(it), new System.Text.UTF8Encoding(true));
+            File.WriteAllText(dlg.FileName, csv ? plan.ToCsv() : plan.ToText(), new System.Text.UTF8Encoding(true));
             ExportLog.Add("Analysis state import report", dlg.FileName, $"{plan.Matches.Count} items");
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
