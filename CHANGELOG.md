@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.2.12
+
+Transcription of empty or unavailable audio files no longer stops the batch.
+
+### Fixed
+- **Empty or unavailable audio no longer fails the transcription batch.** Auto-transcription and *Transcribe*
+  could stop on the first file with `ffmpeg ended with code -541478725` (AVERROR_EOF) when the temporary
+  `audio.opus` was empty or truncated: a WhatsApp voice note never downloaded (a 0-byte placeholder), a
+  short read from a zip, or a copy not fully closed before ffmpeg. The source is now read with a retry,
+  the temporary file is fully written, closed and checked against the expected size before ffmpeg runs,
+  and an empty or unreadable file is skipped (`Skipped: empty/unavailable audio file`) without stopping
+  the others. The skip is written to `%LOCALAPPDATA%\AleappReader\errors.log` without a file name or path.
+
 ## 1.2.11
 
 Media Gallery: image categorization, a size filter and no more crash of the AI on a closed extraction; transcriptions can

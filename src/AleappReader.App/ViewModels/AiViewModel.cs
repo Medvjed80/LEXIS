@@ -730,7 +730,7 @@ public partial class AiViewModel : ObservableObject
         }
         // one file already transcribed: its note, from that one cite. Many: the single Apply at the end of the run.
         if (savedCount == 1 && oneSaved is not null) RememberSavedTranscript(oneSaved);
-        int n = 0;
+        int n = 0, skipped = 0;
         string? noTranscription = null;
         try
         {
@@ -739,7 +739,19 @@ public partial class AiViewModel : ObservableObject
                 n++;
                 Status = $"Audio {n:N0} of {pending.Count:N0}";
                 // SILK (WeChat, QQ) goes as the WAV kept with the case: no engine reads SILK itself
-                var (bytes, name, silk) = await Task.Run(() => SilkAudio.ForTranscription(m, m.AudioFolders ?? folders), ct);
+                var got = await Task.Run(() =>
+                {
+                    var ok = AudioSource.TryForTranscription(m, m.AudioFolders ?? folders, out var b, out var nm, out var sk, out var why);
+                    return (ok, b, nm, sk, why);
+                }, ct);
+                if (!got.ok)
+                {
+                    skipped++;
+                    ErrorText.Append(AudioSource.SkippedEmpty); // no file name or path
+                    Status = $"Audio {n:N0} of {pending.Count:N0}: {got.why}";
+                    return; // the rest of the batch continues
+                }
+                var (bytes, name, silk) = (got.b!, got.nm, got.sk);
                 var sendId = _store.LogSend(r.Provider, r.Model, "Transcription",
                     $"audio {name} ({bytes.Length:N0} bytes, sha256 {Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant()})" +
                     (silk is null ? "" : $", decoded from SILK {m.Name} (sha256 {silk}) by {SilkAudio.Decoder}"));
@@ -749,6 +761,13 @@ public partial class AiViewModel : ObservableObject
                 {
                     noTranscription = e.Message;
                     throw new OperationCanceledException(); // the others stop: asked once below
+                }
+                catch (Exception e) when (AudioSource.IsUnusableInput(e))
+                {
+                    skipped++;
+                    ErrorText.Append(AudioSource.SkippedEmpty, e); // types and stack only, never the ffmpeg path
+                    Status = $"Audio {n:N0} of {pending.Count:N0}: {AudioSource.SkippedEmpty}";
+                    return;
                 }
                 var body = TranscriptNote(text, lang);
                 _store.Save(r.Provider, r.Model, "Transcription", "Speech to text", $"{m.Name} {AiText.Key("media", m.RefId)}",
@@ -764,7 +783,7 @@ public partial class AiViewModel : ObservableObject
             Status = $"Audio not transcribed: {left}";
             return;
         }
-        Status = "Done.";
+        Status = skipped == 0 ? "Done." : $"Done. {skipped:N0} skipped: empty/unavailable audio file";
     });
 
     /// <summary>What is stored for one transcription: the words, or that none were recognised, and the language when known.</summary>

@@ -1536,6 +1536,7 @@ public static class WhisperCpp
 
     public static async Task<Transcript> Transcribe(string exe, string model, string fileName, byte[] audio, CancellationToken ct)
     {
+        if (audio.Length == 0) throw new EmptyAudioException();
         if (!File.Exists(exe)) throw new AiException($"whisper-cli not found: {exe}");
         var modelPath = Path.IsPathRooted(model) ? model : ModelFolders(exe).Select(d => Path.Combine(d, model)).FirstOrDefault(File.Exists)
                         ?? throw new AiException($"Model {model} not found beside whisper-cli");
@@ -1545,7 +1546,7 @@ public static class WhisperCpp
             // the extension comes from the evidence's file name: only letters and digits reach a path or a command line
             var ext = Path.GetExtension(fileName).ToLowerInvariant() is var e && Regex.IsMatch(e, @"^\.[a-z0-9]{1,8}$") ? e : "";
             var input = Path.Combine(work.FullName, "audio" + (ext == "" ? ".bin" : ext));
-            await File.WriteAllBytesAsync(input, audio, ct);
+            await AudioSource.WriteFully(input, audio, ct);
             if (!Readable.Contains(ext))
             {
                 var ff = Ffmpeg(exe) ?? throw new AiException($"whisper.cpp does not read {ext} audio and ffmpeg could not be written to this computer: put ffmpeg.exe beside whisper-cli (or on PATH).");

@@ -115,16 +115,7 @@ public partial class App : Application
     static void OnUnhandled(object sender, DispatcherUnhandledExceptionEventArgs e)
     {
         // the box shows only the message: the stack goes to a log beside the settings, to find where it came from
-        try
-        {
-            var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AleappReader");
-            Directory.CreateDirectory(dir);
-            var log = Path.Combine(dir, "errors.log");
-            if (File.Exists(log) && new FileInfo(log).Length > 256 * 1024) File.Delete(log); // a small rolling log, never kept for long
-            File.AppendAllText(log, $"{DateTime.Now:O}{Environment.NewLine}{ErrorText.Describe(e.Exception)}{Environment.NewLine}{Environment.NewLine}");
-        }
-        catch (IOException) { }
-        catch (UnauthorizedAccessException) { }
+        ErrorText.Append(e.Exception); // types and stack only; a small rolling log, never kept for long
         MessageBox.Show(e.Exception.Message, "LEXIS", MessageBoxButton.OK, MessageBoxImage.Error);
         e.Handled = true;
     }
