@@ -1,10 +1,10 @@
 # LEXIS — LEAPP Reader
 
 > **This is a community fork of [G33KF/LEXIS](https://github.com/G33KF/LEXIS)** (upstream version 1.2.5, MIT).
-> It adds the 1.2.6–1.2.8 features, buildable ALEAPP/iLEAPP engines and a privacy hardening, designed following GDPR privacy-by-design principles.
+> It adds the 1.2.6–1.2.12 features, buildable ALEAPP/iLEAPP engines and a privacy hardening, designed following GDPR privacy-by-design principles.
 > The full list of differences is in [CHANGES-FROM-UPSTREAM.md](CHANGES-FROM-UPSTREAM.md); the data-protection
 > notes are in [PRIVACY.md](PRIVACY.md) ([italiano](PRIVACY.it.md)); security reporting is in [SECURITY.md](SECURITY.md).
-> The upstream licence and copyright are kept unchanged (see [LICENSE](LICENSE) and [NOTICE](NOTICE)).
+> The upstream MIT licence and copyright are kept (see [LICENSE](LICENSE) and [NOTICE](NOTICE)); fork modifications are also copyrighted by Alessio Ferrara.
 > Not affiliated with, or endorsed by, the upstream author. **Never put real case data in issues or pull requests.**
 
 LEXIS is a Windows graphical analysis environment for **ALEAPP** (Android) and **iLEAPP** (iOS).
@@ -47,22 +47,43 @@ files keep their hashes. Tags and notes are saved in `_reader_tags.db` beside th
 AI results in `_reader_ai.db`.
 
 > [!NOTE]
-> *This is a first release and may still need some work, but I'm happy to share it.*
->
-> *For details about the logic and architecture, see https://g33kf.github.io/LEXIS/*
+> *Current fork release: **1.2.12**. For the architecture of the original project, see https://g33kf.github.io/LEXIS/*
 
 
 ## Download
 
-Get `LEXIS-<version>-win-x64.exe` from the [Releases](../../releases) page. The `.sha256` file
-beside it is the checksum to verify the download against:
+Get `LEXIS-1.2.12-win-x64.exe` from the [Releases](../../releases) page. `SHA256SUMS.txt` on the same
+release lists the checksums.
 
 ```powershell
-Get-FileHash .\LEXIS-1.2.5-win-x64.exe -Algorithm SHA256
+Get-FileHash .\LEXIS-1.2.12-win-x64.exe -Algorithm SHA256
 ```
+
+The SHA-256 of the 1.2.12 Windows x64 build is
+`c0ef392142371f5686b5bef8d0fcfb722cabc32793e0d8418b901e28c21179e9`.
 
 Windows 10/11 x64 is required. Nothing is installed: the exe runs from any folder. The WebView2
 runtime, which Windows 11 already has, is needed only for the HTML previews and the map.
+
+## What's new since v1.2.8
+
+The earlier 1.2.6–1.2.8 work (self-contained exe, Portable Case fixes, tagged files, privacy hardening) is kept.
+This release adds:
+
+- **1.2.9 — UFED/UFADE advanced logical extractions.** Every member of the zip is indexed, including names that
+  differ only in case; iLEAPP also sees files outside the iTunes backup; a NULL domain, path or file ID in
+  `Manifest.db` no longer makes the extraction unreadable.
+- **1.2.10 — Analysis state.** Tags and examiner notes can be exported and imported across parsings of the same
+  extraction (`.lexisstate`, no evidence content).
+- **1.2.11 — Media Gallery and AI settings.** Image categorization (vision LLM or a local ONNX classifier),
+  deletion of transcriptions, a gallery size filter, Ollama `think: false` and a capped context (`num_ctx`),
+  and a fix so Gallery AI no longer crashes if the extraction zip has been closed. The local classifier, if you
+  train one, must never be trained with CSAM and only on lawfully held material; no trained model is shipped.
+- **1.2.12 — Empty or unavailable audio.** Auto-transcription and *Transcribe* skip empty or unreadable audio
+  (for example a 0-byte WhatsApp voice-note placeholder) instead of stopping the batch on an ffmpeg EOF error.
+
+The detailed list is in [CHANGELOG.md](CHANGELOG.md). Image categorization is documented in
+[docs/image-categorization.md](docs/image-categorization.md).
 
 ## What the reader adds on top of LEAPP
 
@@ -168,7 +189,12 @@ runtime, which Windows 11 already has, is needed only for the HTML previews and 
   the ffmpeg carried by LEXIS. **Transcribe audio** on the chat list transcribes only the voice
   and audio messages of the selected chats. The transcript is saved in the AI base and written
   into that audio file's note (an examiner's own note is kept and the transcript appended; a
-  note written by an earlier transcription is replaced).
+  note written by an earlier transcription is replaced). An empty or unreadable file is skipped
+  so the rest of the batch can continue. Transcriptions can be deleted from the AI results list
+  (one, several, or all).
+- **Categorize images** in the Media Gallery: a vision LLM or a local ONNX model labels pictures
+  with an editable category list. Results stay in the case's AI database; no trained classifier
+  is shipped (see [docs/image-categorization.md](docs/image-categorization.md)).
 - Audio plays from the preview: the gallery tile, the details pane, a chat bubble and the
   Extraction Files viewer. Play and pause stay in place. Opus, AMR, Ogg and SILK are converted
   for listening; the original file is not changed.
@@ -307,6 +333,7 @@ Carried inside the exe (the full notices are in [NOTICE](NOTICE)):
 - [MetadataExtractor](https://github.com/drewnoakes/metadata-extractor-dotnet) (Apache-2.0) and [XmpCore](https://github.com/drewnoakes/xmp-core-dotnet) (BSD-3, from the Adobe XMP Toolkit): media metadata.
 - [Tesseract OCR](https://github.com/tesseract-ocr/tesseract) (Apache-2.0), [Leptonica](https://github.com/DanBloomberg/leptonica) (BSD-2) and the [tessdata_fast](https://github.com/tesseract-ocr/tessdata_fast) models (Apache-2.0), from the [Tesseract NuGet package](https://github.com/charlesw/tesseract).
 - [FFmpeg](https://github.com/FFmpeg/FFmpeg) 9.0.2 (LGPL-2.1+, built without GPL or non-free parts by `tools/ffmpeg/build.sh`).
+- [ONNX Runtime](https://github.com/microsoft/onnxruntime) 1.24.4 and [DirectML](https://github.com/microsoft/DirectML) 1.15.4 (MIT), for a local image classifier the examiner can supply. No trained model is bundled.
 - The SILK decoder from [kn007/silk-v3-decoder](https://github.com/kn007/silk-v3-decoder) (MIT; SILK SDK © Skype Limited, BSD-style), for WeChat voice messages.
 - ALEAPP and iLEAPP run on an embedded Python runtime ([PSF licence](https://docs.python.org/3/license.html)) packaged with [PyInstaller](https://github.com/pyinstaller/pyinstaller) (GPL-2.0 with the bootloader exception).
 

@@ -35,6 +35,8 @@ categories** (art. 9) and **criminal-offence data** (art. 10). LEXIS handles it 
 | Analysis state (`.lexisstate`) | Written **only when the examiner exports it**, where they save it | Tags, examiner notes, metadata (artifact, row id, path, size, a date) and SHA-256 hashes; no evidence content, but still case data: keep and delete it with the case. Nothing sends it anywhere. |
 | Image categories (`image_categories` in `_reader_ai.db`) | Written when the examiner runs *Categorize images*; exported to CSV only on request | Per picture: file name, device path, SHA-256, engine, model, scores and the model's one-line reason. AI-generated, unverified. With Ollama/LM Studio on this computer or an ONNX model, no picture leaves the machine; a remote server is used only when chosen, after a confirmation, and logged in the send log. |
 
+The optional local ONNX classifier is not shipped pre-trained. If you train one, **never train it with CSAM**, and only on material you lawfully hold and are legally permitted to process.
+
 ## 4. Optional features that can send data out (opt-in only)
 
 1. **AI on a local engine** (Ollama, LM Studio, whisper.cpp on this PC): nothing leaves the machine.

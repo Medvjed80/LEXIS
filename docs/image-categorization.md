@@ -114,3 +114,13 @@ formula are neutralised.
 
 With a local engine (Ollama/LM Studio on this computer, or ONNX) no picture leaves the machine. A remote server is used
 only when chosen in AI settings, and each run that would send pictures to it is confirmed first.
+
+## Training a local ONNX classifier
+
+LEXIS does not ship a trained classifier. You can train your own (for example a linear probe on a frozen
+[SigLIP 2](https://github.com/google-research/big_vision) encoder, Apache-2.0) and export it to ONNX as described
+above. SigLIP weights are not bundled in this repository or in the exe; the name is documented only as a possible
+backbone.
+
+**The classifier must never be trained with CSAM (child sexual abuse material).** Train only on material you lawfully
+hold and are legally permitted to process. Do not send such material to a cloud service.

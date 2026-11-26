@@ -2,7 +2,7 @@
 
 This fork is based on **[G33KF/LEXIS](https://github.com/G33KF/LEXIS) at upstream version 1.2.5** (commit `a0bc77e`, tag `Lexis_V.1.2.5`, MIT).
 The git history keeps the upstream commits; this fork's work is the commits on top of it (`git log a0bc77e..HEAD`,
-`git diff a0bc77e..HEAD`). The version of this fork is **1.2.8**.
+`git diff a0bc77e..HEAD`). The version of this fork is **1.2.12**. Changes since 1.2.8 (UFED/UFADE indexing, analysis state, image categorization, transcription deletion, size filter, empty-audio skip) are listed in [CHANGELOG.md](CHANGELOG.md).
 
 Questo fork si basa su **[G33KF/LEXIS](https://github.com/G33KF/LEXIS) alla versione upstream 1.2.5** (commit `a0bc77e`, tag `Lexis_V.1.2.5`, MIT).
 La cronologia git conserva i commit originali; il lavoro del fork è nei commit successivi.
